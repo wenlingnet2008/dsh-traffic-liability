@@ -1,0 +1,8 @@
+# 开发期 overlay。从仓库根目录运行：
+#   pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
+# 插件路径必须是绝对路径；法规数据读取插件内的 data/laws。
+- insert:
+    - id: traffic-liability
+      name: '/Users/wilsonxu/deepseek-harness/traffic-liability-plugin/src/index.ts'
+      config:
+        caseDir: '/Users/wilsonxu/deepseek-harness/traffic-liability-plugin/.cases'

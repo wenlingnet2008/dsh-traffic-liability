@@ -1,0 +1,47 @@
+{
+  "version": "2026-10-10",
+  "laws": [
+    {
+      "lawId": "road_traffic_safety_law",
+      "title": "中华人民共和国道路交通安全法",
+      "shortNames": ["道路交通安全法", "道交法", "安全法"],
+      "versions": [
+        {
+          "versionId": "2021",
+          "label": "2021年修正汇编本",
+          "effectiveFrom": "2021-04-29",
+          "effectiveTo": null,
+          "sourceUrl": "https://jtgl.beijing.gov.cn/jgj/jgxx/flfg/fl/205308/index.html",
+          "checkedOn": "2026-10-10"
+        }
+      ]
+    },
+    {
+      "lawId": "road_traffic_safety_regulations",
+      "title": "中华人民共和国道路交通安全法实施条例",
+      "shortNames": ["道路交通安全法实施条例", "实施条例", "条例"],
+      "versions": [
+        {
+          "versionId": "2017",
+          "label": "2017年修订汇编本",
+          "effectiveFrom": "2017-10-07",
+          "effectiveTo": null,
+          "sourceUrl": "https://xzfg.moj.gov.cn/front/law/detail?LawID=75",
+          "checkedOn": "2026-10-07"
+        },
+        {
+          "versionId": "2004",
+          "label": "2004年公布文本",
+          "effectiveFrom": "2004-05-01",
+          "effectiveTo": "2017-10-06",
+          "sourceUrl": "https://xzfg.moj.gov.cn/front/law/detail?LawID=1614",
+          "checkedOn": "2026-10-07"
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "road_traffic_safety_regulations": "现行汇编本第一条至第一百一十五条全文，另保留第十五条2004年文本；要件标注覆盖信号、路口让行、变道、会车、掉头倒车、排队、转向灯、警示、临时停车、非机动车路口与受阻借道、非机动车行驶规定、匝道、简易程序及责任评价条款。",
+    "road_traffic_safety_law": "2021年修正汇编本；运行 scripts/import-safety-law.ts 从已保存的官方网页导入全文后覆盖第一条至第一百二十四条，否则仅含第四十四条和第五十六条。地方性法规尚未收录。"
+  }
+}

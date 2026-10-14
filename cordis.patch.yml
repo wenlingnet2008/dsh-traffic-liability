@@ -1,0 +1,6 @@
+# bundle 层。安装到 profile 后由 dsh plugin add 自动启用：
+#   dsh plugin --profile <name> add ./traffic-liability-plugin
+# 法规数据默认读取包内 data/laws；案件默认保存在当前目录的 .traffic-liability。
+- insert:
+    - id: traffic-liability
+      name: dsh-traffic-liability
