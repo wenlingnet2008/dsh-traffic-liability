@@ -242,6 +242,9 @@ assert.throws(
 const savedDuties = submitStage(store, lib, { caseId, stage: 'duties', payload: duties });
 assert.equal(savedDuties.status, 'analyzed');
 assert.equal(savedDuties.nextStage, 'faults');
+assert.equal(savedDuties.clarification.questions.length, 1);
+assert.equal(savedDuties.clarification.questions[0].itemId, 'road.nonmotor_passable');
+assert.match(savedDuties.clarification.questions[0].impact, /许可是否成立/);
 
 // Re-saving an upstream stage marks downstream results stale.
 submitStage(store, lib, { caseId, stage: 'evidence', payload: evidence });

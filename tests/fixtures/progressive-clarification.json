@@ -1,0 +1,17 @@
+{
+  "status": "limited",
+  "pendingCount": 1,
+  "pendingBlockingCount": 0,
+  "pendingConditionalCount": 1,
+  "pendingIntakeCount": 0,
+  "questions": [{
+    "itemId": "item.signal",
+    "question": "甲车当时面对的信号灯是什么颜色？",
+    "impact": "红灯与绿灯会改变通行义务判断。",
+    "severity": "conditional",
+    "partyId": "A",
+    "factIds": ["signal"],
+    "stages": ["evidence"],
+    "status": "pending"
+  }]
+}

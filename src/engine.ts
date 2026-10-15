@@ -4,8 +4,10 @@
  * liability-scenario consistency, then persists one JSON record per case.
  */
 import { randomUUID } from 'node:crypto';
+import { applyReviewAnswer, intakeField, invalidateReview, reviewAnswerValue, reviewView, reviewIntakeSpec, reviewAnalysisSpec, type ReviewRecord } from './review-model.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { clarificationFor, collectQuestions, evidenceForUpdate, latestAnswers, sameQuestion, type QuestionAnswer } from './questions.ts';
 import {
   articleNumberOf,
   catalogSummary,
@@ -22,6 +24,7 @@ import {
   stageSpecs,
   stages,
   validate,
+  answerBatchSpec,
   type AnalysisIssue,
   type CausalAnalysis,
   type CausalExclusion,
@@ -34,6 +37,7 @@ import {
   type Payload,
   type Registration,
   type Stage,
+  type QuestionReply,
 } from './schema.ts';
 
 export type StageStatus = 'not_started' | 'analyzed' | 'needs_investigation' | 'stale';
@@ -51,6 +55,9 @@ export interface CaseRecord {
   updatedAt: string;
   lawCatalogVersion: string;
   stages: Record<Stage, StageRecord>;
+  /** Absent in legacy cases; stage gaps still produce a question queue on read. */
+  questionAnswers?: QuestionAnswer[];
+  review?: ReviewRecord;
 }
 
 const idPattern = /^[A-Za-z0-9_-]{1,80}$/;
@@ -250,7 +257,11 @@ function validateEvidence(p: EvidenceAnalysis, reg: Registration) {
   }
   const questions = p.openQuestions ?? [];
   ensure(new Set(questions.map((q) => q.itemId)).size === questions.length, '补问事项 itemId 重复：同一事实事项只问一次');
-  for (const q of questions) if (q.partyId) references([q.partyId], reg.parties, '补问的询问对象');
+  for (const q of questions) {
+    if (q.partyId) references([q.partyId], reg.parties, '补问涉及的参与方');
+    references(q.factIds ?? [], p.facts, '补问的事实');
+    ensure((q.factIds ?? []).every((id) => fact(id).status !== 'supported'), `补问 ${q.itemId} 不能重复询问已采纳事实`);
+  }
 }
 
 function validateIssues(c: CaseRecord, stage: 'duties' | 'causation', issues: AnalysisIssue[], affectable: string[]) {
@@ -308,7 +319,7 @@ function validateLegalMatch(c: CaseRecord, lib: LawLibrary, m: LegalMatch, reg: 
     const statuses = el.factIds.map(status);
     if (el.status === 'met' || el.status === 'not_met')
       ensure(el.factIds.length > 0 && statuses.every((s) => s === 'supported'), `要件 ${el.id}（${m.id}）标为 ${el.status} 必须引用已采纳事实`);
-    if (el.status === 'unknown') ensure(statuses.every((s) => s !== 'supported'), `要件 ${el.id}（${m.id}）标为 unknown 时不能引用已采纳事实作为依据`);
+    if (el.status === 'unknown') ensure(statuses.length > 0 && statuses.every((s) => s !== 'supported'), `要件 ${el.id}（${m.id}）标为 unknown 时须引用未知或争议事实，以便补问`);
     if (el.status === 'disputed') ensure(statuses.includes('disputed'), `要件 ${el.id}（${m.id}）标为 disputed 必须引用争议事实`);
   }
   checkFacts(c, [...m.missingFactIds, ...m.contraryFactIds], false);
@@ -662,7 +673,85 @@ export interface SubmitResult {
   status: StageStatus;
   blockers: string[];
   nextStage: Stage | null;
+  clarification: ReturnType<typeof clarificationFor>;
   note: string;
+}
+
+/**
+ * Save a user reply batch atomically; substantive answers require a new evidence analysis.
+ * @param store case store
+ * @param caseId existing case id
+ * @param replies one to three attributed replies to recorded questions
+ * @returns question state and the evidence draft for incorporating the user's statements
+ * @throws for malformed replies, unknown questions, or a duplicate factual item in the batch
+ */
+export function recordAnswers(store: CaseStore, caseId: string, replies: unknown) {
+  const violations = validate(answerBatchSpec, replies);
+  ensure(!violations.length, `补充回答结构不合法：${violations.join('；')}`);
+  const record = store.get(caseId);
+  const questions = collectQuestions(record);
+  const latest = latestAnswers(record);
+  const batch = replies as QuestionReply[];
+  const prepared: QuestionAnswer[] = [];
+  for (const reply of batch) {
+    const question = questions.find((q) => q.itemId === reply.itemId) ?? latest.find((a) => a.itemId === reply.itemId)?.questionRecord;
+    ensure(question, `补问事项不存在：${reply.itemId}。请先用 traffic_case_read 读取问题，不能编造用户回答`);
+    ensure(!prepared.some((a) => sameQuestion(a.questionRecord, question)), '同一补问事项不能在一次提交中重复回答');
+    ensure(reply.status !== 'answered' || !/^(?:不清楚|不知道|不确定|记不清|无法确认|unknown|not sure)[。.!！\s]*$/i.test(reply.answer.trim()), '用户不清楚时 status 必须为 unknown，不能作为确定事实');
+    const prior = latest.find((a) => sameQuestion(a.questionRecord, question));
+    prepared.push({
+      ...reply, id: randomUUID(), questionRecord: structuredClone(question), receivedAt: new Date().toISOString(),
+      appliedAtRevision: question.target === 'review_intake' || (reply.status === 'unknown' && prior?.status !== 'answered') ? record.revision + 1 : null,
+    });
+  }
+  const changes = prepared.filter((a) => {
+    const prior = latest.find((p) => sameQuestion(p.questionRecord, a.questionRecord));
+    const restoresReviewField = a.questionRecord.target === 'review_intake' && record.review &&
+      intakeField(record.review.intake, a.itemId.replace(/^review\.field\./, '')) !== reviewAnswerValue(a);
+    return !prior || prior.status !== a.status || prior.answer !== a.answer || prior.speaker !== a.speaker || restoresReviewField;
+  });
+  if (changes.length) {
+    for (const answer of changes) applyReviewAnswer(record, answer);
+    record.questionAnswers = [...(record.questionAnswers ?? []), ...changes];
+    if (changes.some((a) => a.appliedAtRevision === null)) {
+      invalidateReview(record);
+      for (const stage of stages.slice(1)) {
+        const saved = record.stages[stage];
+        if (!saved.payload) continue;
+        saved.status = 'stale';
+        saved.blockers = ['用户已补充关键事实，须更新证据并重新分析'];
+      }
+    }
+    store.save(record);
+  }
+  const clarification = clarificationFor(record);
+  return {
+    saved: true, caseId, clarification, evidenceForUpdate: evidenceForUpdate(record),
+    nextStage: stages.find((s) => !usable(record.stages[s].status)) ?? null,
+    note: clarification.status === 'needs_reanalysis'
+      ? '回答已保存为当事人陈述。请使用 evidenceForUpdate 更新 facts 和 behaviorFrames，完成影像对照后保存 evidence，再按顺序重做下游分析；不得直接把回答转换成责任结论。'
+      : clarification.status === 'needs_answers'
+      ? '本次回答已记录。请先保存现有可形成的分析，受阻部分保持暂无法判断，再向用户提出 clarification.questions 中尚未回答的问题并说明影响；不清楚的事项不再重复询问，不要求答完所有问题。'
+      : '回答已记录。不清楚的事项保持未知，不再重复询问；尚未回答的条件性问题可后续补充，先在明确条件或暂无法判断的前提下继续分析。',
+  };
+}
+
+function validateAnswerIncorporation(record: CaseRecord, evidence: EvidenceAnalysis) {
+  for (const answer of latestAnswers(record).filter((a) => a.appliedAtRevision === null)) {
+    const materialId = `reply_m_${answer.id}`;
+    const observationId = `reply_o_${answer.id}`;
+    const observation = evidence.observations.find((o) => o.id === observationId);
+    ensure(evidence.materials.some((m) => m.id === materialId && m.kind === 'statement'), `补充回答 ${answer.itemId} 须保留 evidenceForUpdate 中的陈述材料`);
+    ensure(
+      observation?.materialId === materialId && observation.kind === 'statement' && observation.content === answer.answer && observation.speaker === answer.speaker,
+      `补充回答 ${answer.itemId} 须保留原话和陈述主体，不能遗漏或改写为客观观察`,
+    );
+    for (const factId of answer.questionRecord.factIds) {
+      const fact = evidence.facts.find((f) => f.id === factId);
+      ensure(fact && [...fact.supportingObservationIds, ...fact.opposingObservationIds].includes(observationId), `补充回答 ${answer.itemId} 须用于更新关联事实 ${factId}；不确定或有冲突时保持 unknown 或 disputed`);
+      ensure(answer.status !== 'unknown' || fact?.status !== 'supported', `补充回答 ${answer.itemId} 已更正为不清楚，关联事实 ${factId} 须重新核对并保留 unknown 或 disputed`);
+    }
+  }
 }
 
 /**
@@ -698,6 +787,7 @@ export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInpu
       break;
     case 'evidence':
       validateEvidence(payload as EvidenceAnalysis, reg);
+      validateAnswerIncorporation(record, payload as EvidenceAnalysis);
       break;
     case 'duties':
       blockers = validateDuties(record, lib, payload as Duties, reg);
@@ -708,9 +798,15 @@ export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInpu
     case 'causation':
       blockers = validateCausation(record, payload as Causation);
       break;
-    case 'liability':
+    case 'liability': {
+      const clarification = clarificationFor(record, true);
+      const type = (payload as Liability).recommendationType;
+      ensure(type !== 'supported' || clarification.pendingCount === 0, '存在影响定责的待回答问题，不能给出无条件的确定建议；可先保存明确假设下的条件性建议或暂无法判断，不要求答完所有问题');
+      ensure(type !== 'supported' || clarification.unresolved.length === 0, '关键补问事项仍然未知或存在争议，只能给出明确条件下的建议或暂无法判断');
+      ensure(!(clarification.pendingCount || clarification.unresolved.length) || (payload as Liability).limitations.length > 0, '仍有未解决的事故事实，责任建议须在 limitations 中说明限制');
       validateLiability(record, lib, payload as Liability, reg);
       break;
+    }
   }
   for (const later of stages.slice(index + 1)) {
     const s = record.stages[later];
@@ -719,13 +815,20 @@ export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInpu
   }
   const status: StageStatus = blockers.length ? 'needs_investigation' : 'analyzed';
   record.stages[input.stage] = { status, revision: record.revision + 1, payload, blockers };
+  invalidateReview(record);
+  if (input.stage === 'evidence') {
+    for (const answer of latestAnswers(record)) if (answer.appliedAtRevision === null) answer.appliedAtRevision = record.revision + 1;
+  }
   store.save(record);
+  const clarification = clarificationFor(record);
   const nextStage = stages[index + 1] ?? null;
-  const base = blockers.length
+  let base = blockers.length
     ? `${stageLabels[input.stage]}已保存，但存在阻断事项；可继续下一阶段，责任建议中受影响的部分须保持暂无法判断。`
     : nextStage
       ? `${stageLabels[input.stage]}已保存。下一阶段：${nextStage}（${stageLabels[nextStage]}）。`
-      : `${stageLabels[input.stage]}已保存，分析完成。`;
+      : `${stageLabels[input.stage]}已保存${clarification.status === 'complete' ? '，分析完成' : ''}。`;
+  if (clarification.status === 'needs_answers') base += ' 存在关键事实阻断，请向用户提出 clarification.questions 中的问题并说明影响；先保存当前可形成的分析，受阻部分保持暂无法判断，不要替用户作答或要求答完所有问题。';
+  if (clarification.status === 'limited') base += ' 条件性事实或申请资料仍待补充，可先完成附条件的分析或暂无法判断的结果；不清楚的事项不再重复询问，未解决事实须列明限制。申请资料缺项仅限制申请书待签版。';
   return {
     saved: true,
     caseId: record.id,
@@ -733,6 +836,7 @@ export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInpu
     status,
     blockers,
     nextStage,
+    clarification,
     note: reg.occurredAt === null ? `${base} 事发日期未知，法条效力版本未核对，请在 limitations 中注明。` : base,
   };
 }
@@ -755,6 +859,10 @@ export function readCase(store: CaseStore, lib: LawLibrary, caseId: string) {
     updatedAt: c.updatedAt,
     nextStage,
     adoptedFacts,
+    clarification: clarificationFor(c),
+    evidenceForUpdate: evidenceForUpdate(c),
+    review: reviewView(c),
+    reviewContract: { intake: reviewIntakeSpec, analysis: reviewAnalysisSpec },
     stages: Object.fromEntries(
       stages.map((s) => {
         const r = c.stages[s];

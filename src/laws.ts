@@ -560,6 +560,8 @@ export interface SearchInput {
   item?: number;
   tags?: string[];
   occurredAt?: string | null;
+  /** Explicit review/application date takes precedence over the accident date. */
+  asOf?: string;
   offset?: number;
   limit?: number;
 }
@@ -629,6 +631,8 @@ const day = (iso?: string | null) => (iso ? iso.slice(0, 10) : null);
  * @returns ranked candidate cards with paging and a model-facing notice
  */
 export function searchLaw(lib: LawLibrary, input: SearchInput): SearchResult {
+  if (input.asOf !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(input.asOf) || !Number.isFinite(Date.parse(input.asOf)) || new Date(input.asOf).toISOString().slice(0, 10) !== input.asOf)) throw new Error('asOf 必须是有效的 YYYY-MM-DD 日期');
+  const lookupDay = day(input.asOf ?? input.occurredAt);
   const offset = Math.max(0, input.offset ?? 0);
   const limit = Math.min(Math.max(1, input.limit ?? 6), 12);
   const query = (input.query ?? '').trim();
@@ -654,7 +658,7 @@ export function searchLaw(lib: LawLibrary, input: SearchInput): SearchResult {
         nextOffset: null,
         notice: `法规目录没有 lawId 为 ${input.lawId} 的法律，属于法规缺口。`,
       };
-    const lookup = lookupArticle(lib, ref, day(input.occurredAt));
+    const lookup = lookupArticle(lib, ref, lookupDay);
     const paged = page(
       lookup.entries.map((e) => card(lib, e, [`精确身份：${lookup.identity}`], ref)),
       offset,
@@ -667,19 +671,19 @@ export function searchLaw(lib: LawLibrary, input: SearchInput): SearchResult {
       total: paged.total,
       hasMore: paged.hasMore,
       nextOffset: paged.nextOffset,
-      notice: lookup.note || '已按法律名称和条款号精确定位。用 traffic_rule_read 读取完整原文、款项定位和要件标注后再判断适用性。',
+      notice: (lookup.note || '已按法律名称和条款号精确定位。用 traffic_rule_read 读取完整原文、款项定位和要件标注后再判断适用性。').replaceAll('事发日期', input.asOf ? '核对日期' : '事发日期'),
     };
   }
   const idHit = lib.byId.get(query);
   if (idHit)
     return {
-      status: 'matched',
+      status: lookupDay && !within(idHit.rule, lookupDay) ? 'version_not_covered' : 'matched',
       identity: `${idHit.lawTitle}${idHit.rule.article}`,
       cards: [card(lib, idHit, ['规则 ID 精确匹配'])],
       total: 1,
       hasMore: false,
       nextOffset: null,
-      notice: '规则 ID 精确匹配。用 traffic_rule_read 读取完整原文。',
+      notice: lookupDay && !within(idHit.rule, lookupDay) ? `该版本不覆盖核对日期 ${lookupDay}。` : '规则 ID 精确匹配。用 traffic_rule_read 读取完整原文。',
     };
   const terms = queryTerms(query);
   for (const tag of input.tags ?? []) if (!terms.canonicals.includes(tag)) terms.canonicals.push(tag);
@@ -688,14 +692,15 @@ export function searchLaw(lib: LawLibrary, input: SearchInput): SearchResult {
     const rule = lib.byId.get(ruleId)?.rule;
     if (rule) boosts[ruleId] = [...new Set(list.filter((a) => verifyAnnotation(a, rule) === 'verified').flatMap((a) => a.behaviors))];
   }
-  const when = day(input.occurredAt);
+  const when = lookupDay;
   const scored = lib.entries
+    .filter((entry) => !input.lawId || entry.lawId === input.lawId)
     .map((entry) => scoreEntry(entry, terms, boosts))
     .filter((s) => s.score > 0 || (!query && !terms.canonicals.length))
     .sort((a, b) => b.score - a.score || a.entry.lawId.localeCompare(b.entry.lawId) || (a.entry.articleNumber ?? 0) - (b.entry.articleNumber ?? 0));
   const cards = scored.map((s) => {
     const reasons = [...s.reasons];
-    if (when && !within(s.entry.rule, when)) reasons.push(`注意：该版本不覆盖事发日期 ${when}`);
+    if (when && !within(s.entry.rule, when)) reasons.push(`注意：该版本不覆盖${input.asOf ? '核对日期' : '事发日期'} ${when}`);
     return card(lib, s.entry, reasons.length ? reasons : ['浏览法规'], null);
   });
   const paged = page(cards, offset, limit);

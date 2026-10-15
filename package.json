@@ -1,11 +1,16 @@
 {
   "name": "dsh-traffic-liability",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "交通事故定责分析插件：六阶段结构化分析、法规检索与程序校验",
   "main": "lib/index.js",
-  "files": ["lib", "data", "cordis.patch.yml", "README.md"],
+  "files": [
+    "lib",
+    "data",
+    "cordis.patch.yml",
+    "README.md"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -14,6 +19,10 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json 2>&1 | grep -E '^(src|tests)/' || echo 'no plugin type errors'",
-    "smoke": "node --import tsx tests/smoke.ts"
+    "smoke": "node --import tsx tests/smoke.ts",
+    "test": "node --import tsx tests/smoke.ts && node --import tsx tests/questions.ts && node --import tsx tests/review.ts && node --import tsx tests/tools.ts"
+  },
+  "dependencies": {
+    "docx": "9.11.0"
   }
 }

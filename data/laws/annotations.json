@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-10",
+  "version": "2026-10-14",
   "note": "要件标注按条、款、项维护，anchorQuote 必须出现在当前存储的官方原文中，否则该标注视为未核验，不能自动参与适用判断。标注只是核对清单，不是法律结论；模型仍须读取完整条文核对主体、日期、地区、触发条件和例外。",
   "annotations": [
     {
@@ -766,6 +766,366 @@
       "anchorQuote": "按照各自过错的比例分担责任",
       "notes": ["赔偿责任规则；不能用赔偿规则倒推事故过错，也不能先给某类参与方固定责任分"],
       "annotationVersion": "2026-10-10"
+    },
+    {
+      "id": "ann_procedure_71",
+      "ruleId": "accident_procedure_article_71",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十一条",
+        "articleNumber": 71
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "送达日期",
+        "三个工作日内书面申请",
+        "复核请求、理由和主要证据",
+        "同一事故复核一次"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十一条　当事人对道路交通事故认定或者出具道路交通事故证明有异议的，可以自道路交通事故认定书或者道路交通事故证明送达之日起三日内提出书面复核申请。当事人逾期提交复核申请的，不予受理，并书面通知申请人。",
+      "sourceTextHash": "566558a408003936dfebb752597298646f5d9c7aa3d452104c693d11bf683eca",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_72",
+      "ruleId": "accident_procedure_article_72",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十二条",
+        "articleNumber": 72
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "经原机关提出或直接向上一级提出",
+        "上一级公安机关交通管理部门审查"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十二条　复核申请人通过作出道路交通事故认定的公安机关交通管理部门提出复核申请的，作出道路交通事故认定的公安机关交通管理部门应当自收到复核申请之日起二日内将复核申请连同道路交通事故有关材料移送上一级公安机关交通管理部门。",
+      "sourceTextHash": "3011f0e8835a10b0901ab112a969718841770d13e1b0bf8c06d790cf18a7e150",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_73",
+      "ruleId": "accident_procedure_article_73",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十三条",
+        "articleNumber": 73
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "逾期不予受理",
+        "收到申请之日为受理之日"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十三条　除当事人逾期提交复核申请的情形外，上一级公安机关交通管理部门收到复核申请之日即为受理之日。",
+      "sourceTextHash": "d8fc68ba1fb751662a3d16432063d44b4353db36b4849a166cd26a5bcce1b9fb",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_74",
+      "ruleId": "accident_procedure_article_74",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十四条",
+        "articleNumber": 74
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "事实、证据、法律及责任划分",
+        "调查及认定程序",
+        "原则上书面审查",
+        "受理后三十日内复核"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十四条　上一级公安机关交通管理部门自受理复核申请之日起三十日内，对下列内容进行审查，并作出复核结论：",
+      "sourceTextHash": "918d400a22deb0f0cb9adb278fa3ba93d3dcae660b0ce2938dba3d49866064a8",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_75",
+      "ruleId": "accident_procedure_article_75",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十五条",
+        "articleNumber": 75
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "申请撤销后的终止",
+        "诉讼受理或批准逮捕后告知相关司法机关"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十五条　复核审查期间，申请人提出撤销复核申请的，公安机关交通管理部门应当终止复核，并书面通知各方当事人。",
+      "sourceTextHash": "4729ed2c5dc51461bab6fafc1590fd1ab460ac159a84f31794d8e32a0d694214",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_76",
+      "ruleId": "accident_procedure_article_76",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十六条",
+        "articleNumber": 76
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "维持原认定条件",
+        "不影响认定的程序瑕疵可补正或解释",
+        "责令重新调查认定的五种情形"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十六条　上一级公安机关交通管理部门认为原道路交通事故认定事实清楚、证据确实充分、适用法律正确、责任划分公正、程序合法的，应当作出维持原道路交通事故认定的复核结论。",
+      "sourceTextHash": "138baec2801ac32bab9bec5dd2f4c67d1322d0b4317e13e0b6e1962d59d6be67",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_77",
+      "ruleId": "accident_procedure_article_77",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十七条",
+        "articleNumber": 77
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "事故证明成因确实无法查清或仍需调查"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十七条　上一级公安机关交通管理部门审查原道路交通事故证明后，按下列规定处理：",
+      "sourceTextHash": "6f633b64a8d96ea676b47b06e23765c06b9658056673fa7dc5e219d6c36b3020",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_78",
+      "ruleId": "accident_procedure_article_78",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十八条",
+        "articleNumber": 78
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "复核结论作出后三个工作日内送达"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十八条　上一级公安机关交通管理部门应当在作出复核结论后三日内将复核结论送达各方当事人。公安机关交通管理部门认为必要的，应当召集各方当事人，当场宣布复核结论。",
+      "sourceTextHash": "29d22f88a21b6bb4af447b684a4d268f7c0f4879e558601d4b8d2578e8960857",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_79",
+      "ruleId": "accident_procedure_article_79",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第七十九条",
+        "articleNumber": 79
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "原办案单位重新调查认定并撤销原文书",
+        "需要检验鉴定时另核对时限"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [
+        "accident_procedure_article_112"
+      ],
+      "anchorQuote": "第七十九条　上一级公安机关交通管理部门作出责令重新调查、认定的复核结论后，原办案单位应当在十日内依照本规定重新调查，重新作出道路交通事故认定，撤销原道路交通事故认定书或者原道路交通事故证明。",
+      "sourceTextHash": "933076ccaad8cfba18c7b0bea70db446ac6522a936d307a7872ce11985ae55a2",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
+    },
+    {
+      "id": "ann_procedure_112",
+      "ruleId": "accident_procedure_article_112",
+      "legalRef": {
+        "lawId": "road_traffic_accident_procedures",
+        "article": "第一百一十二条",
+        "articleNumber": 112
+      },
+      "normRoles": [
+        "procedure_rule"
+      ],
+      "subjects": [
+        "当事人",
+        "公安机关交通管理部门"
+      ],
+      "behaviors": [
+        "review"
+      ],
+      "relations": [],
+      "triggerElements": [
+        "一日、二日、三日、五日、十日指工作日，不包括节假日"
+      ],
+      "requiredActions": [],
+      "prohibitedActions": [],
+      "exceptions": [],
+      "crossReferences": [],
+      "anchorQuote": "第一百一十二条　本规定中下列用语的含义是：",
+      "sourceTextHash": "8bde2291c5e5044e86d44e5ee7b4ada70bf4e82bbe1bfd406ca2e8bd9172474c",
+      "notes": [
+        "要件为核对清单，不表示案件已满足；不得自动推算调休截止日期。"
+      ],
+      "annotationVersion": "2026-10-14"
     }
   ]
 }

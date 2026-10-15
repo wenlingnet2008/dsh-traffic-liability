@@ -169,11 +169,26 @@ export const evidenceSpec: Spec = obj({
   ),
   qualityIssues: req(texts),
   behaviorFrames: arr(behaviorFrameSpec, 60),
-  openQuestions: arr(obj({ itemId: req(itemId), partyId: req(nullable(id)), prompt: req(text), impact: req(text) }), 8),
+  openQuestions: arr(
+    obj({ itemId: req(itemId), partyId: req(nullable(id)), prompt: req(text), impact: req(text), factIds: arr(id, 200, 1) }),
+    8,
+  ),
 });
 
 export const issueKinds = ['fact_gap', 'evidence_conflict', 'rule_gap', 'detail'] as const;
 export const severities = ['blocking', 'conditional', 'supplementary'] as const;
+/** User replies preserve their wording and speaker; an unknown reply supplies no factual conclusion. */
+export const answerBatchSpec: Spec = arr(
+  obj({ itemId: req(itemId), status: req(en('answered', 'unknown')), answer: req(text), speaker: req(text) }),
+  3,
+  1,
+);
+export interface QuestionReply {
+  itemId: string;
+  status: 'answered' | 'unknown';
+  answer: string;
+  speaker: string;
+}
 const issueSpec = obj({
   id: req(id),
   kind: req(en(...issueKinds)),
@@ -476,7 +491,7 @@ export interface EvidenceAnalysis {
   facts: Fact[];
   qualityIssues: string[];
   behaviorFrames?: BehaviorFrame[];
-  openQuestions?: { itemId: string; partyId: string | null; prompt: string; impact: string }[];
+  openQuestions?: { itemId: string; partyId: string | null; prompt: string; impact: string; factIds?: string[] }[];
 }
 export interface AnalysisIssue {
   id: string;
