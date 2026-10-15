@@ -1,13 +1,23 @@
 {
   "name": "dsh-traffic-liability",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "交通事故定责分析插件：六阶段结构化分析、法规检索与程序校验",
   "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "files": [
-    "lib",
-    "data",
+    "lib/*.js",
+    "data/laws/*.json",
+    "data/templates/README.md",
+    "data/templates/*.docx",
+    "data/templates/*.txt",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -18,11 +28,22 @@
   },
   "scripts": {
     "build": "tsdown",
+    "prepack": "npm run build",
+    "pack:tarball": "node scripts/pack-tarball.mjs",
+    "test:tarball": "node tests/tarball.mjs",
     "typecheck": "tsc -p tsconfig.json 2>&1 | grep -E '^(src|tests)/' || echo 'no plugin type errors'",
     "smoke": "node --import tsx tests/smoke.ts",
     "test": "node --import tsx tests/smoke.ts && node --import tsx tests/questions.ts && node --import tsx tests/review.ts && node --import tsx tests/tools.ts"
   },
   "dependencies": {
     "docx": "9.11.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2 || ^0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true }
   }
 }

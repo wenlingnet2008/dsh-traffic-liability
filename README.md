@@ -134,18 +134,47 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 ## 打包分发
 
+在插件目录执行以下命令，生成可直接交付的 npm tarball 和 SHA-256 校验文件：
+
 ```sh
-pnpm -C traffic-liability-plugin run build                        # tsdown 打包到 lib/index.js
-pnpm dsh --profile <name> --from-default-profile web              # 可选：从 web 模板新建 profile
-pnpm dsh plugin --profile <name> add ./traffic-liability-plugin
-pnpm dsh --profile <name> --dump-config | grep -A2 traffic-liability
-pnpm dsh --profile <name> --no-open --port 0                      # 验证加载，--port 0 由系统选空闲端口
-pnpm dsh plugin --profile <name> remove dsh-traffic-liability     # 卸载
+npm run pack:tarball
+# dist/dsh-traffic-liability-0.1.2.tgz
+# dist/dsh-traffic-liability-0.1.2.tgz.sha256
 ```
 
-安装是 link 到本仓库 checkout，宿主包仍按源码方式解析，所以要在源码启动方式下使用。bundle 读取包内 `data/laws`，案件默认写到当前目录的 `.traffic-liability`。
+`prepack` 会自动重新构建 `lib/index.js`，直接执行 `npm pack` 或 `pnpm pack` 也会先构建。`pack:tarball` 额外检查分发文件清单并写入校验文件，可传目录参数：`npm run pack:tarball -- /path/to/output`。打包使用当前源码，包括尚未提交的修改。
 
-注意两种运行方式读取的代码不同：安装模式加载的是构建产物 `lib/index.js`，改完 `src/` 必须重新执行上面的 build 并重启 `dsh web` 才会生效；开发期 overlay（`--patch`）直接读 `src/`，改完只需重启。
+包内包含 JavaScript 运行代码、法规数据、可编辑 Word/文字模板、bundle patch 和说明；不包含案件、上传材料、测试样例或源码。`docx` 为普通运行依赖，安装时由包管理器下载，因此该 tarball 不是完全离线安装包。`@deepseek-ai/dsh-tools` 和 `@deepseek-ai/schemastery` 声明为可选 peer，由运行中的 Harness 共享提供，避免安装另一份宿主服务。
+
+兼容范围为 `^0.1.5-rc.2 || ^0.2.0-rc.2`，已通过 `0.1.5-rc.2` 和 `0.2.0-rc.2` 的实际安装及工具测试。Harness 0.2 会按宿主 peer 范围跳过不兼容插件，本版已更新声明。正式版 `0.2.0` 包含在声明范围内；截至 2026-10-15 尚未公开发布，运行验证使用公开的 `0.2.0-rc.2`。
+
+接收方需要已安装的 DeepSeek Harness、Node.js 22.19+ 的 22.x 或 24+、pnpm。无需插件源码、TypeScript 或构建工具。在 tarball 所在目录安装到已有的 Web profile（以下用 `web`）：
+
+```sh
+# macOS / Linux，可选：核对校验文件
+shasum -a 256 -c dsh-traffic-liability-0.1.2.tgz.sha256
+dsh plugin --profile web add ./dsh-traffic-liability-0.1.2.tgz
+dsh --profile web --dump-config
+dsh --profile web
+```
+
+`--dump-config` 应包含 `id: traffic-liability` 和 `name: dsh-traffic-liability`。安装时自动启用 bundle 层；正在运行的 Harness 需重启。Windows 也可使用相同的 `dsh` 安装命令，校验可用 `Get-FileHash .\dsh-traffic-liability-0.1.2.tgz -Algorithm SHA256`。升级时安装新版本 tarball；卸载执行 `dsh plugin --profile web remove dsh-traffic-liability`，案件文件仍由 `caseDir` 保存。
+
+tarball 安装会复制包内构建产物，不链接源码目录。法规默认读取包内 `data/laws`，案件默认写到启动时当前目录的 `.traffic-liability`。为保留历史案件，重启和升级时应沿用原工作目录或显式配置原 `caseDir`。
+
+维护者可在仓库外临时 profile 验证真实安装、卸载、七个工具、法规及 Word 导出：
+
+```sh
+npm run test:tarball
+# 另一个已构建或已安装的 Harness：第二个参数是其 @deepseek-ai/dsh 包目录
+npm run test:tarball -- ./dist/dsh-traffic-liability-0.1.2.tgz /path/to/dsh-package
+```
+
+验证使用临时 `DSH_HOME`，通过已构建的 `dsh` CLI 安装并加载 tarball，结束后清理；默认使用相邻 Harness 的 `apps/cli/lib/bin.js`。测试安装禁用生命周期脚本，确保接收方不需要安装时构建。测试使用各版本宿主的公开接口共享依赖：0.1 使用模块回退，0.2 使用 `createRuntimeResolution` 和 `PluginPackages` 服务；同时检查 0.2 的 bundle 兼容性判定，验证全部七个工具、补问后重分析、法规及 Word 导出。
+
+源码开发仍可从 Harness 根目录执行 `pnpm dsh plugin --profile web add ./traffic-liability-plugin`，此形式会 link 到 checkout；从源码运行 Harness 时把上面的 `dsh` 命令改为 `pnpm dsh`。
+
+安装模式加载构建产物 `lib/index.js`：修改 `src/` 后需重新打包、安装并重启；checkout link 模式需重新 build 并重启。开发期 overlay（`--patch`）直接读 `src/`，改完只需重启。
 
 ## 验证
 
@@ -173,4 +202,4 @@ npx tsc -p traffic-liability-plugin/tsconfig.json 2>&1 | grep '^traffic-liabilit
 ## 当前限制
 
 - 自动化验证覆盖程序校验和工具补问闭环，尚未在真实模型下走通完整六阶段。文书必要字段由程序生成补问，但未被模型记录为关键未知事故事实的缺项无法由程序独立识别；自然语言提问及回答对应关系仍依赖模型。
-- 安装进 profile 的是指向本仓库 checkout 的 link，宿主包按源码方式解析；发布到 npm 或打包 tarball 前还需验证脱离仓库的安装。
+- tarball 支持脱离插件 checkout 安装，仍依赖兼容的 Harness 提供宿主服务；尚未验证所有 Harness 版本及打包可执行程序的组合。
