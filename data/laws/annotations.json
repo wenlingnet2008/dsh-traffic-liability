@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-14",
+  "version": "2026-10-16",
   "note": "要件标注按条、款、项维护，anchorQuote 必须出现在当前存储的官方原文中，否则该标注视为未核验，不能自动参与适用判断。标注只是核对清单，不是法律结论；模型仍须读取完整条文核对主体、日期、地区、触发条件和例外。",
   "annotations": [
     {
@@ -547,6 +547,23 @@
       "annotationVersion": "2026-10-10"
     },
     {
+      "id": "ann_traffic_law_article_22",
+      "ruleId": "traffic_law_article_22",
+      "legalRef": { "lawId": "road_traffic_safety_law", "article": "第二十二条", "articleNumber": 22 },
+      "normRoles": ["behavior_rule", "prohibition"],
+      "subjects": ["机动车驾驶人", "驾驶人", "任何人"],
+      "behaviors": ["motor", "alcohol", "observe"],
+      "relations": [],
+      "triggerElements": ["行为人驾驶机动车，或他人对驾驶人施加强迫、指使、纵容"],
+      "requiredActions": ["按照操作规范安全驾驶、文明驾驶", "不得饮酒、服用国家管制的精神药品或者麻醉药品后驾驶", "患有妨碍安全驾驶机动车的疾病或过度疲劳影响安全驾驶时不得驾驶"],
+      "prohibitedActions": ["强迫、指使、纵容驾驶人违反道路交通安全法律、法规和机动车安全驾驶要求驾驶机动车"],
+      "exceptions": [],
+      "crossReferences": ["regulation_12", "regulation_article_104", "regulation_article_105"],
+      "anchorQuote": "按照操作规范安全驾驶、文明驾驶",
+      "notes": ["饮酒、药物、疾病和过度疲劳须有相应事实或检验依据；不得仅由碰撞结果推定违反本条"],
+      "annotationVersion": "2026-10-16"
+    },
+    {
       "id": "ann_traffic_law_article_42",
       "ruleId": "traffic_law_article_42",
       "legalRef": { "lawId": "road_traffic_safety_law", "article": "第四十二条", "articleNumber": 42 },
@@ -575,7 +592,7 @@
       "requiredActions": ["后车与前车保持足以采取紧急制动措施的安全距离"],
       "prohibitedActions": ["前车正在左转弯、掉头、超车时超车", "与对面来车有会车可能时超车", "前车为执行紧急任务的特种车辆时超车", "行经铁路道口、交叉路口、窄桥、弯道、陡坡、隧道、人行横道、市区交通流量大的路段等没有超车条件时超车"],
       "exceptions": [],
-      "crossReferences": ["regulation_5"],
+      "crossReferences": ["regulation_5", "regulation_6"],
       "anchorQuote": "后车应当与前车保持足以采取紧急制动措施的安全距离",
       "notes": [],
       "annotationVersion": "2026-10-10"

@@ -19,6 +19,13 @@ const candidates = [
 const lawDir = candidates.find((dir) => existsSync(join(dir, 'rules.json'))) ?? candidates[0];
 const lib = loadLawLibrary(lawDir);
 
+const safetyLaw = lib.rules.filter((rule) => rule.title === '中华人民共和国道路交通安全法');
+assert.equal(safetyLaw.length, 124, '道路交通安全法应收录第一条至第一百二十四条');
+assert.deepEqual(
+  lib.entries.filter((entry) => entry.rule.title === '中华人民共和国道路交通安全法').map((entry) => entry.articleNumber),
+  Array.from({ length: 124 }, (_, index) => index + 1),
+);
+
 // Identity search resolves the named law, never another law's same-numbered article.
 const art70 = searchLaw(lib, { query: '道路交通安全法实施条例第七十条第二款' });
 assert.equal(art70.status, 'matched', art70.notice);
@@ -29,6 +36,31 @@ assert.equal(rule70.articleNumber, 70);
 
 const missing = searchLaw(lib, { lawId: 'road_traffic_safety_law', articleNumber: 999 });
 assert.equal(missing.status, 'not_in_library');
+
+// The four safety-law provisions used by the liability and pedestrian/overtaking checks
+// must resolve independently from the same-numbered implementation-regulation articles.
+for (const [articleNumber, quote] of [
+  [22, '按照操作规范安全驾驶、文明驾驶'],
+  [42, '应当保持安全车速'],
+  [43, '足以采取紧急制动措施的安全距离'],
+  [47, '遇行人正在通过人行横道，应当停车让行'],
+] as const) {
+  const result = searchLaw(lib, { lawId: 'road_traffic_safety_law', articleNumber });
+  assert.equal(result.status, 'matched', `道路交通安全法第${articleNumber}条应在法规库中`);
+  const full = readRules(lib, [result.cards[0]!.ruleId]);
+  assert.ok(full.rules[0]?.text.includes(quote));
+}
+for (const [articleNumber, lawId] of [
+  [62, 'road_traffic_safety_regulations'], // safety-law article 22: specific unsafe-driving prohibitions
+  [45, 'road_traffic_safety_regulations'], // article 42: ordinary speed limits
+  [46, 'road_traffic_safety_regulations'], // article 42: hazardous conditions
+  [47, 'road_traffic_safety_regulations'], // article 43: overtaking procedure
+  [48, 'road_traffic_safety_regulations'], // article 43: meeting/overtaking conflict
+  [39, 'road_traffic_safety_regulations'], // article 47: pedestrian signal crossings
+  [75, 'road_traffic_safety_regulations'], // article 47: pedestrian crossing duties
+] as const) {
+  assert.equal(searchLaw(lib, { lawId, articleNumber }).status, 'matched', `对应实施条例第${articleNumber}条应在法规库中`);
+}
 
 const borrow = searchLaw(lib, { query: '非机动车 借道 机动车道' });
 assert.ok(borrow.total > 0, '关键词检索应有候选');
