@@ -21,8 +21,10 @@ for (const required of [
   'data/laws/rules.json', 'data/laws/catalog.json', 'data/laws/annotations.json',
   'data/templates/README.md', 'data/templates/道路交通事故认定复核申请书模板.docx',
   'data/templates/道路交通事故认定复核申请书模板.txt',
+  'docs/upgrade-guide/v0.1.3/stage-validation/guide.md',
+  'docs/upgrade-guide/v0.1.3/stage-validation/guide.zh.md',
 ]) assert.ok(files.has(required), `打包缺少必要文件：${required}`);
-for (const file of files) assert.match(file, /^(?:package\.json|README\.md|cordis\.patch\.yml|lib\/[^/]+\.js|data\/laws\/[^/]+\.json|data\/templates\/(?:README\.md|[^/]+\.(?:docx|txt)))$/, `意外的分发文件：${file}`);
+for (const file of files) assert.match(file, /^(?:package\.json|README\.md|cordis\.patch\.yml|lib\/[^/]+\.js|data\/laws\/[^/]+\.json|data\/templates\/(?:README\.md|[^/]+\.(?:docx|txt))|docs\/upgrade-guide\/[^/]+\/[^/]+\/guide(?:\.zh)?\.md)$/, `意外的分发文件：${file}`);
 const tarball = join(output, packed.filename);
 const hash = createHash('sha256').update(readFileSync(tarball)).digest('hex');
 writeFileSync(`${tarball}.sha256`, `${hash}  ${basename(tarball)}\n`);

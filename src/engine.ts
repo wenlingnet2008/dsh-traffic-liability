@@ -4,7 +4,8 @@
  * liability-scenario consistency, then persists one JSON record per case.
  */
 import { randomUUID } from 'node:crypto';
-import { applyReviewAnswer, intakeField, invalidateReview, reviewAnswerValue, reviewView, reviewIntakeSpec, reviewAnalysisSpec, type ReviewRecord } from './review-model.ts';
+import { applyReviewAnswer, intakeField, invalidateReview, reviewAnswerValue, reviewView, type ReviewRecord } from './review-model.ts';
+import { PayloadValidationError, ValidationIssues } from './validation.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { clarificationFor, collectQuestions, evidenceForUpdate, latestAnswers, sameQuestion, type QuestionAnswer } from './questions.ts';
@@ -19,8 +20,7 @@ import {
   type Rule,
 } from './laws.ts';
 import {
-  describeSpec,
-  requiredFields,
+  stageContracts,
   stageLabels,
   stageSpecs,
   stages,
@@ -144,13 +144,17 @@ export class CaseStore {
 }
 
 function ensure(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
+  if (!condition) throw new PayloadValidationError([{ path: '$', message }]);
 }
 function unique(items: { id: string }[], label: string) {
   ensure(new Set(items.map((x) => x.id)).size === items.length, `${label} ID 重复`);
 }
 function references(ids: string[], items: { id: string }[], label: string) {
-  for (const id of ids) ensure(items.some((x) => x.id === id), `${label} 引用不存在：${id}`);
+  const invalid = ids.filter((id) => !items.some((x) => x.id === id));
+  if (invalid.length) throw new PayloadValidationError([{
+    path: '$', message: `${label} 引用不存在：${invalid.slice(0, 20).join('、')}${invalid.length > 20 ? `（另有 ${invalid.length - 20} 项，见 actual 与省略数）` : ''}`,
+    actual: invalid, allowedValues: items.map((item) => item.id),
+  }]);
 }
 const usable = (status: StageStatus) => status === 'analyzed' || status === 'needs_investigation';
 const evidenceOf = (c: CaseRecord) => c.stages.evidence.payload as EvidenceAnalysis | null;
@@ -182,6 +186,7 @@ function validateRegistration(p: Registration) {
 }
 
 function validateEvidence(p: EvidenceAnalysis, reg: Registration) {
+  const errors = new ValidationIssues();
   unique(p.materials, '材料');
   unique(p.observations, '提取记录');
   unique(p.facts, '事实');
@@ -190,20 +195,20 @@ function validateEvidence(p: EvidenceAnalysis, reg: Registration) {
     if (p.skippedReason === 'no_materials') ensure(p.materials.length === 0, '已有材料时不能以无材料跳过');
     ensure(p.facts.every((f) => f.status === 'unknown'), '跳过证据整理时不能认定事实');
   }
-  for (const o of p.observations) {
+  p.observations.forEach((o, index) => errors.capture(`$.observations[${index}]`, () => {
     references([o.materialId], p.materials, '提取记录的材料');
     references(o.partyIds, reg.parties, '参与方');
     references(o.vehicleIds, reg.vehicles, '车辆');
     if (o.kind === 'statement') ensure(o.speaker !== null, `陈述 ${o.id} 必须保留陈述主体 speaker`);
     const material = p.materials.find((m) => m.id === o.materialId)!;
     if (material.kind === 'statement') ensure(o.kind === 'statement', `当事人陈述材料 ${material.id} 的提取记录必须保留为 statement，不能转为客观观察`);
-  }
+  }));
   const visuals = p.materials.filter((m) => isVisual(m.kind));
-  for (const fact of p.facts) {
+  p.facts.forEach((fact, index) => errors.capture(`$.facts[${index}]`, () => {
     references([...fact.supportingObservationIds, ...fact.opposingObservationIds], p.observations, '提取记录');
     const checks = fact.visualChecks ?? [];
     ensure(new Set(checks.map((x) => x.materialId)).size === checks.length, `事实 ${fact.id} 的影像对照材料重复`);
-    for (const check of checks) {
+    checks.forEach((check, checkIndex) => errors.capture(`$.facts[${index}].visualChecks[${checkIndex}]`, () => {
       const material = p.materials.find((m) => m.id === check.materialId);
       ensure(material && isVisual(material.kind), `事实 ${fact.id} 的影像对照必须引用 kind 为 photo 或 video 的材料`);
       references(check.observationIds, p.observations, '影像对照提取记录');
@@ -212,9 +217,9 @@ function validateEvidence(p: EvidenceAnalysis, reg: Registration) {
           p.observations.find((o) => o.id === observationId)!.materialId === material.id,
           `事实 ${fact.id} 的影像对照引用的提取记录不属于材料 ${material.id}`,
         );
-      if (check.result !== 'unclear') ensure(check.observationIds.length > 0, `事实 ${fact.id} 的影像对照需要可追溯的提取记录；无法读取时请标记 unclear`);
+      if (check.result !== 'unclear') errors.check(check.observationIds.length > 0, `$.facts[${index}].visualChecks[${checkIndex}].observationIds`, `事实 ${fact.id} 的影像对照需要可追溯的提取记录；无法读取时请标记 unclear`);
       if (check.result === 'conflict') ensure(fact.status === 'disputed', `事实 ${fact.id} 与影像冲突，必须记录为 disputed`);
-    }
+    }));
     fact.adoptionBasis = null;
     if (fact.status === 'supported') {
       ensure(fact.supportingObservationIds.length > 0, `已采纳事实 ${fact.id} 必须有来源`);
@@ -230,11 +235,11 @@ function validateEvidence(p: EvidenceAnalysis, reg: Registration) {
         }
       fact.adoptionBasis = supporting.some((o) => o.kind === 'observation') ? 'observation' : 'statement_adopted';
     }
-  }
+  }));
   const frames = p.behaviorFrames ?? [];
   unique(frames, '行为框架');
   const fact = (id: string) => p.facts.find((f) => f.id === id)!;
-  for (const frame of frames) {
+  frames.forEach((frame, index) => errors.capture(`$.behaviorFrames[${index}]`, () => {
     references([frame.partyId, ...frame.relativePartyIds], reg.parties, '行为参与方');
     ensure(!frame.relativePartyIds.includes(frame.partyId), `行为 ${frame.id} 的相对方不能是本人`);
     references([...frame.factIds, ...frame.unknownFactIds], p.facts, '行为事实');
@@ -255,41 +260,49 @@ function validateEvidence(p: EvidenceAnalysis, reg: Registration) {
         frame.unknownFactIds.length > 0 || frame.factIds.some((id) => fact(id).status !== 'supported'),
         `行为 ${frame.id} 标为 conditional 时必须指出未知或争议事实`,
       );
-  }
+  }));
   const questions = p.openQuestions ?? [];
   ensure(new Set(questions.map((q) => q.itemId)).size === questions.length, '补问事项 itemId 重复：同一事实事项只问一次');
-  for (const q of questions) {
+  questions.forEach((q, index) => errors.capture(`$.openQuestions[${index}]`, () => {
     if (q.partyId) references([q.partyId], reg.parties, '补问涉及的参与方');
     references(q.factIds ?? [], p.facts, '补问的事实');
     ensure((q.factIds ?? []).every((id) => fact(id).status !== 'supported'), `补问 ${q.itemId} 不能重复询问已采纳事实`);
-  }
+  }));
+  errors.finish();
 }
 
 function validateIssues(c: CaseRecord, stage: 'duties' | 'causation', issues: AnalysisIssue[], affectable: string[]) {
+  const errors = new ValidationIssues();
   unique(issues, '待查事项');
   const upstream = stage === 'causation' ? ((c.stages.duties.payload as Duties).issues ?? []) : [];
   const facts = factsOf(c);
   const materials = evidenceOf(c)?.materials ?? [];
-  for (const issue of issues) {
-    ensure(!upstream.some((i) => i.id === issue.id), `待查事项 ${issue.id} 与上游阶段重名，不同阶段须使用不同 ID`);
-    ensure(issue.affectedIds.every((id) => affectable.includes(id)), `待查事项 ${issue.id} 须引用当前阶段实际受影响的义务或因果分析`);
-    references(issue.factIds, facts, `待查事项 ${issue.id} 的事实`);
-    references(issue.evidenceIds, materials, `待查事项 ${issue.id} 的材料`);
-    if (issue.kind === 'fact_gap') {
-      ensure(issue.factIds.length > 0, `事实缺项 ${issue.id} 须定位到证据阶段的未知或争议事实，不能泛泛要求补证`);
-      ensure(
-        issue.factIds.every((id) => facts.find((f) => f.id === id)?.status !== 'supported'),
-        `待查事项 ${issue.id}：已采纳事实不得再次作为事实缺项；单方来源或缺少独立佐证不是重新核查的理由`,
-      );
-    }
-    if (issue.kind === 'evidence_conflict')
-      ensure(
-        issue.evidenceIds.length > 0 && issue.factIds.some((id) => facts.find((f) => f.id === id)?.status === 'disputed'),
-        `证据冲突 ${issue.id} 须指向已记录的争议事实及具体材料，不得假设存在相反证据`,
-      );
-    if (issue.kind === 'detail') ensure(issue.severity === 'supplementary', `补充细节 ${issue.id} 不能阻止责任建议`);
-    if (issue.kind === 'rule_gap') ensure(issue.severity !== 'conditional', `法条缺失 ${issue.id} 不能用假设替代；只将影响当前义务的法条缺失列为 blocking`);
-  }
+  issues.forEach((issue, index) => {
+    const invalid = issue.affectedIds.filter((id) => !affectable.includes(id));
+    errors.check(invalid.length === 0, `$.issues[${index}].affectedIds`, `待查事项 ${issue.id} 含无效引用；须引用 ${stage === 'duties' ? 'duties[].id（不接受 legalMatches 或 relations 的 ID）' : 'analyses[].id'}`, {
+      actual: invalid, expected: stage === 'duties' ? 'duties[].id' : 'analyses[].id', allowedValues: affectable,
+    });
+    errors.capture(`$.issues[${index}]`, () => {
+      ensure(!upstream.some((i) => i.id === issue.id), `待查事项 ${issue.id} 与上游阶段重名，不同阶段须使用不同 ID`);
+      references(issue.factIds, facts, `待查事项 ${issue.id} 的事实`);
+      references(issue.evidenceIds, materials, `待查事项 ${issue.id} 的材料`);
+      if (issue.kind === 'fact_gap') {
+        ensure(issue.factIds.length > 0, `事实缺项 ${issue.id} 须定位到证据阶段的未知或争议事实，不能泛泛要求补证`);
+        ensure(
+          issue.factIds.every((id) => facts.find((f) => f.id === id)?.status !== 'supported'),
+          `待查事项 ${issue.id}：已采纳事实不得再次作为事实缺项；单方来源或缺少独立佐证不是重新核查的理由`,
+        );
+      }
+      if (issue.kind === 'evidence_conflict')
+        ensure(
+          issue.evidenceIds.length > 0 && issue.factIds.some((id) => facts.find((f) => f.id === id)?.status === 'disputed'),
+          `证据冲突 ${issue.id} 须指向已记录的争议事实及具体材料，不得假设存在相反证据`,
+        );
+      if (issue.kind === 'detail') ensure(issue.severity === 'supplementary', `补充细节 ${issue.id} 不能阻止责任建议`);
+      if (issue.kind === 'rule_gap') ensure(issue.severity !== 'conditional', `法条缺失 ${issue.id} 不能用假设替代；只将影响当前义务的法条缺失列为 blocking`);
+    });
+  });
+  errors.finish();
   return issues.filter((i) => i.severity === 'blocking').map((i) => `${i.id}：${i.question}；影响：${i.impact}`);
 }
 
@@ -315,49 +328,58 @@ function validateLegalMatch(c: CaseRecord, lib: LawLibrary, m: LegalMatch, reg: 
   ensure(!pairs.has(key), `同一行为对同一条款重复匹配：${key}`);
   pairs.add(key);
   unique(m.elements, `法律匹配 ${m.id} 的要件`);
-  for (const el of m.elements) {
+  const errors = new ValidationIssues();
+  m.elements.forEach((el, index) => errors.capture(`$.elements[${index}].factIds`, () => {
     checkFacts(c, el.factIds, false);
     const statuses = el.factIds.map(status);
     if (el.status === 'met' || el.status === 'not_met')
-      ensure(el.factIds.length > 0 && statuses.every((s) => s === 'supported'), `要件 ${el.id}（${m.id}）标为 ${el.status} 必须引用已采纳事实`);
-    if (el.status === 'unknown') ensure(statuses.length > 0 && statuses.every((s) => s !== 'supported'), `要件 ${el.id}（${m.id}）标为 unknown 时须引用未知或争议事实，以便补问`);
-    if (el.status === 'disputed') ensure(statuses.includes('disputed'), `要件 ${el.id}（${m.id}）标为 disputed 必须引用争议事实`);
-  }
-  checkFacts(c, [...m.missingFactIds, ...m.contraryFactIds], false);
-  ensure(m.missingFactIds.every((id) => status(id) !== 'supported'), `法律匹配 ${m.id} 的 missingFactIds 只能引用未知或争议事实`);
-  ensure(m.contraryFactIds.every((id) => status(id) === 'supported'), `法律匹配 ${m.id} 的反证必须是已采纳事实`);
+      errors.check(el.factIds.length > 0 && statuses.every((s) => s === 'supported'), `$.elements[${index}].factIds`, `要件 ${el.id}（${m.id}）标为 ${el.status} 必须引用已采纳事实`, { expected: 'facts[].status=supported' });
+    if (el.status === 'unknown') errors.check(statuses.length > 0 && statuses.every((s) => s !== 'supported'), `$.elements[${index}].factIds`, `要件 ${el.id}（${m.id}）标为 unknown 时须引用未知或争议事实，以便补问`, { expected: 'facts[].status=unknown|disputed', allowedValues: facts.filter((f) => f.status !== 'supported').map((f) => f.id) });
+    if (el.status === 'disputed') errors.check(statuses.includes('disputed'), `$.elements[${index}].factIds`, `要件 ${el.id}（${m.id}）标为 disputed 必须引用争议事实`);
+  }));
+  errors.capture('$.missingFactIds', () => {
+    checkFacts(c, m.missingFactIds, false);
+    ensure(m.missingFactIds.every((id) => status(id) !== 'supported'), `法律匹配 ${m.id} 的 missingFactIds 只能引用未知或争议事实`);
+  });
+  errors.capture('$.contraryFactIds', () => {
+    checkFacts(c, m.contraryFactIds, false);
+    ensure(m.contraryFactIds.every((id) => status(id) === 'supported'), `法律匹配 ${m.id} 的反证必须是已采纳事实`);
+  });
   const unresolved = m.elements.some((e) => e.status === 'unknown' || e.status === 'disputed');
   const notMet = m.elements.some((e) => e.status === 'not_met');
   if (m.applicability === 'applicable') {
-    ensure(!unresolved && !notMet, `法律匹配 ${m.id} 的要件未全部满足时不能标为 applicable`);
-    inForce(lib, rule.id, reg, `法律匹配 ${m.id}`);
+    errors.check(!unresolved && !notMet, '$.applicability', `法律匹配 ${m.id} 的要件未全部满足时不能标为 applicable；未决要件用 conditional，已有不满足要件用 not_applicable`);
+    errors.capture('$.applicability', () => inForce(lib, rule.id, reg, `法律匹配 ${m.id}`));
   }
-  if (m.applicability === 'conditional') ensure(unresolved || m.missingFactIds.length > 0, `法律匹配 ${m.id} 标为 conditional 必须列出未决要件或缺失事实`);
-  if (m.applicability === 'not_applicable') ensure(notMet || m.contraryFactIds.length > 0, `法律匹配 ${m.id} 标为不适用须有未满足的要件或反证`);
-  if (m.normRole === 'conditional_permission') {
-    ensure(m.permission !== null, `许可条款 ${m.id} 必须填写 permission`);
-    ensure(
-      m.breachStatus === 'not_established' || m.breachStatus === 'undetermined',
-      `许可判断 ${m.id} 不能被写成已违反或条件违反；许可范围之外的独立义务须单独记录`,
-    );
-    const permission = m.permission!;
-    if (permission.status === 'satisfied')
-      ensure(m.applicability === 'applicable' && m.breachStatus === 'not_established', `许可条件已满足时 ${m.id} 的适用性应为 applicable，违反状态应为 not_established`);
-    if (permission.status === 'conditionally_allowed') ensure(m.applicability === 'conditional', `有条件允许的 ${m.id} 适用性应为 conditional`);
-    if (permission.status === 'not_applicable') ensure(m.applicability === 'not_applicable', `许可不适用的 ${m.id} 适用性应为 not_applicable`);
-  } else ensure(m.permission === null, `非许可条款 ${m.id} 不应填写 permission`);
+  if (m.applicability === 'conditional') errors.check(unresolved || m.missingFactIds.length > 0, '$.applicability', `法律匹配 ${m.id} 标为 conditional 必须列出未决要件或缺失事实`);
+  if (m.applicability === 'not_applicable') errors.check(notMet || m.contraryFactIds.length > 0, '$.applicability', `法律匹配 ${m.id} 标为不适用须有未满足的要件或反证`);
+  errors.capture('$.permission', () => {
+    if (m.normRole === 'conditional_permission') {
+      ensure(m.permission !== null, `许可条款 ${m.id} 必须填写 permission`);
+      ensure(
+        m.breachStatus === 'not_established' || m.breachStatus === 'undetermined',
+        `许可判断 ${m.id} 不能被写成已违反或条件违反；许可范围之外的独立义务须单独记录`,
+      );
+      const permission = m.permission!;
+      if (permission.status === 'satisfied')
+        ensure(m.applicability === 'applicable' && m.breachStatus === 'not_established', `许可条件已满足时 ${m.id} 的适用性应为 applicable，违反状态应为 not_established`);
+      if (permission.status === 'conditionally_allowed') ensure(m.applicability === 'conditional', `有条件允许的 ${m.id} 适用性应为 conditional`);
+      if (permission.status === 'not_applicable') ensure(m.applicability === 'not_applicable', `许可不适用的 ${m.id} 适用性应为 not_applicable`);
+    } else ensure(m.permission === null, `非许可条款 ${m.id} 不应填写 permission`);
+  });
   if (m.breachStatus === 'supported') {
-    ensure(m.applicability === 'applicable', `违反判断 ${m.id} 标为 supported 时适用性必须为 applicable`);
-    ensure(m.elements.length > 0, `违反判断 ${m.id} 必须列出满足的要件和具体行为事实，不能只引用事故结果`);
-    ensure(frame.status === 'supported', `违反判断 ${m.id} 依赖的行为 ${frame.id} 尚未成立，只能条件性判断`);
-    ensure(m.contraryFactIds.length === 0, `存在反证时 ${m.id} 不能标为 supported`);
+    errors.check(m.applicability === 'applicable', '$.breachStatus', `违反判断 ${m.id} 标为 supported 时适用性必须为 applicable`);
+    errors.check(m.elements.length > 0, '$.elements', `违反判断 ${m.id} 必须列出满足的要件和具体行为事实，不能只引用事故结果`);
+    errors.check(frame.status === 'supported', '$.breachStatus', `违反判断 ${m.id} 依赖的行为 ${frame.id} 尚未成立，只能条件性判断`);
+    errors.check(m.contraryFactIds.length === 0, '$.contraryFactIds', `存在反证时 ${m.id} 不能标为 supported`);
   }
-  if (m.breachStatus === 'conditional') ensure(m.missingFactIds.length > 0 || unresolved, `条件性违反 ${m.id} 必须列出未决事实或要件`);
+  if (m.breachStatus === 'conditional') errors.check(m.missingFactIds.length > 0 || unresolved, '$.breachStatus', `条件性违反 ${m.id} 必须列出未决事实或要件`);
   if (m.breachStatus === 'not_established')
-    ensure(
+    errors.check(
       m.contraryFactIds.length > 0 || notMet || m.permission?.status === 'satisfied',
-      `${m.id} 标为不成立须有反证、未满足的要件或已满足的许可；没有材料证明违法不等于已证明合法`,
+      '$.breachStatus', `${m.id} 标为不成立须有反证、未满足的要件或已满足的许可；没有材料证明违法不等于已证明合法，依据不足用 undetermined`,
     );
+  errors.finish();
 }
 
 /** Borrowing a motor lane under regulation article 70 must evaluate the motor vehicle's slow-and-yield duty too. */
@@ -388,10 +410,11 @@ function validateBorrowingDuties(lib: LawLibrary, p: Duties, reg: Registration) 
 }
 
 function validateDuties(c: CaseRecord, lib: LawLibrary, p: Duties, reg: Registration): string[] {
-  validateBorrowingDuties(lib, p, reg);
+  const errors = new ValidationIssues();
+  errors.capture('$.duties', () => validateBorrowingDuties(lib, p, reg));
   unique(p.duties, '义务');
   unique(p.relations, '让行关系');
-  for (const duty of p.duties) {
+  p.duties.forEach((duty, index) => errors.capture(`$.duties[${index}]`, () => {
     references([duty.partyId, ...duty.relativePartyIds], reg.parties, '参与方');
     ensure(!duty.relativePartyIds.includes(duty.partyId), `义务 ${duty.id} 的相对方不能是义务主体本人`);
     checkFacts(c, duty.factIds, duty.status === 'supported');
@@ -399,10 +422,10 @@ function validateDuties(c: CaseRecord, lib: LawLibrary, p: Duties, reg: Registra
       ruleOf(lib, ruleId, `义务 ${duty.id}`);
       if (duty.status === 'supported') inForce(lib, ruleId, reg, `义务 ${duty.id}`);
     }
-  }
+  }));
   const facts = factsOf(c);
   const status = (id: string) => facts.find((f) => f.id === id)!.status;
-  for (const r of p.relations) {
+  p.relations.forEach((r, index) => errors.capture(`$.relations[${index}]`, () => {
     references([r.partyId, ...r.relativePartyIds], reg.parties, '让行关系参与方');
     ensure(!r.relativePartyIds.includes(r.partyId), `让行关系 ${r.id} 的相对方不能是义务主体本人`);
     for (const ruleId of r.ruleIds) ruleOf(lib, ruleId, `让行关系 ${r.id}`);
@@ -418,28 +441,32 @@ function validateDuties(c: CaseRecord, lib: LawLibrary, p: Duties, reg: Registra
     if (r.performance === 'performed' || r.performance === 'not_performed')
       ensure(r.factIds.some((id) => status(id) === 'supported'), `让行关系 ${r.id} 的履行状态须有已采纳的行为事实支持；发生碰撞本身不证明未让行`);
     if (r.relationType === 'no_relation') ensure(r.performance === 'not_applicable', `无让行关系的 ${r.id} 不应有履行状态`);
-  }
+  }));
   if (p.legalMatches.length) {
     ensure((evidenceOf(c)?.behaviorFrames ?? []).length > 0, '法律匹配需要先在 evidence 阶段形成行为框架（behaviorFrames）');
     unique(p.legalMatches, '法律匹配');
     const pairs = new Set<string>();
-    for (const m of p.legalMatches) validateLegalMatch(c, lib, m, reg, pairs);
+    p.legalMatches.forEach((m, index) => errors.capture(`$.legalMatches[${index}]`, () => validateLegalMatch(c, lib, m, reg, pairs)));
   }
-  return validateIssues(c, 'duties', p.issues, p.duties.map((d) => d.id));
+  let blockers: string[] = [];
+  errors.capture('$', () => { blockers = validateIssues(c, 'duties', p.issues, p.duties.map((d) => d.id)); });
+  errors.finish();
+  return blockers;
 }
 
 function validateFaults(c: CaseRecord, p: Faults) {
+  const errors = new ValidationIssues();
   const duties = (c.stages.duties.payload as Duties).duties;
   const matches = (c.stages.duties.payload as Duties).legalMatches;
   unique(p.faults, '过错');
-  for (const fault of p.faults) {
+  p.faults.forEach((fault, index) => errors.capture(`$.faults[${index}]`, () => {
     references([fault.dutyId], duties, `过错 ${fault.id} 的义务`);
     ensure(duties.find((x) => x.id === fault.dutyId)?.partyId === fault.partyId, `过错 ${fault.id} 的主体与义务主体不一致`);
     checkFacts(c, fault.factIds, false);
-  }
+  }));
   unique(p.evaluations, '过错评价');
   ensure(new Set(p.evaluations.map((e) => e.faultId)).size === p.evaluations.length, '同一过错只能有一条评价；重复法条或同义描述增加依据，不增加过错数量');
-  for (const e of p.evaluations) {
+  p.evaluations.forEach((e, index) => errors.capture(`$.evaluations[${index}]`, () => {
     references([e.faultId], p.faults, `评价 ${e.id} 对应的过错`);
     const fault = p.faults.find((f) => f.id === e.faultId)!;
     ensure(fault.partyId === e.partyId, `评价 ${e.id} 的主体与过错 ${fault.id} 的主体不一致`);
@@ -460,7 +487,8 @@ function validateFaults(c: CaseRecord, p: Faults) {
       if (supportedBreach) ensure(e.scenarioCondition === null, `评价 ${e.id} 已有成立的违反判断，不应标为条件情景分`);
     } else ensure(e.seriousness.score === null, `评价 ${e.id} 未评分时 score 必须为 null，不能用 0 或默认值代替未知`);
     if (e.majorFaultCandidate) ensure(e.majorFaultReason !== null && e.pendingReviewFactIds.length > 0, `重大过错候选 ${e.id} 必须同时填写触发理由和待核对事实`);
-  }
+  }));
+  errors.finish();
 }
 
 function validateContribution(c: CaseRecord, a: CausalAnalysis) {
@@ -483,11 +511,12 @@ function validateContribution(c: CaseRecord, a: CausalAnalysis) {
 }
 
 function validateCausation(c: CaseRecord, p: Causation): string[] {
+  const errors = new ValidationIssues();
   const faults = (c.stages.faults.payload as Faults).faults;
   const duties = (c.stages.duties.payload as Duties).duties;
   const blockers: string[] = [];
   unique(p.analyses, '因果分析');
-  for (const a of p.analyses) {
+  p.analyses.forEach((a, index) => errors.capture(`$.analyses[${index}]`, () => {
     references([a.faultId], faults, `因果分析 ${a.id} 的过错`);
     const fault = faults.find((x) => x.id === a.faultId)!;
     const supported = a.conclusion === 'supported';
@@ -526,9 +555,10 @@ function validateCausation(c: CaseRecord, p: Causation): string[] {
       blockers.push(`${a.id}：需要鉴定或专业审核：${a.technicalReviewReason}`);
     }
     validateContribution(c, a);
-  }
-  for (const fault of faults) ensure(p.analyses.some((a) => a.faultId === fault.id), `过错 ${fault.id} 缺少因果分析`);
-  blockers.push(...validateIssues(c, 'causation', p.issues, p.analyses.map((a) => a.id)));
+  }));
+  for (const fault of faults) errors.check(p.analyses.some((a) => a.faultId === fault.id), '$.analyses', `过错 ${fault.id} 缺少因果分析`);
+  errors.capture('$', () => { blockers.push(...validateIssues(c, 'causation', p.issues, p.analyses.map((a) => a.id))); });
+  errors.finish();
   return blockers;
 }
 
@@ -761,15 +791,18 @@ function validateAnswerIncorporation(record: CaseRecord, evidence: EvidenceAnaly
  * @param lib law library used for legal-identity checks
  * @param input stage, payload, and the case id (omitted only when creating a case at registration)
  * @returns the saved stage status and blockers
- * @throws a Chinese message naming the first structural or consistency violation to fix
+ * @throws PayloadValidationError with structural or independently checked consistency violations; failed validation never writes a case
  */
 export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInput): SubmitResult {
   const violations = validate(stageSpecs[input.stage], input.payload);
   if (violations.length) {
-    const shown = violations.slice(0, 12);
-    throw new Error(`${stageLabels[input.stage]}结果结构不合法：${shown.join('；')}${violations.length > shown.length ? `；另有 ${violations.length - shown.length} 处` : ''}`);
+    throw new PayloadValidationError(violations.map((message) => {
+      const space = message.indexOf(' ');
+      return { path: message.slice(0, space), message: message.slice(space + 1) };
+    }));
   }
   const payload = structuredClone(input.payload) as Payload;
+  if (input.stage === 'registration') validateRegistration(payload as Registration);
   let record: CaseRecord;
   if (input.stage === 'registration' && !input.caseId) {
     const reg = payload as Registration;
@@ -784,7 +817,6 @@ export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInpu
   let blockers: string[] = [];
   switch (input.stage) {
     case 'registration':
-      validateRegistration(payload as Registration);
       break;
     case 'evidence':
       validateEvidence(payload as EvidenceAnalysis, reg);
@@ -863,16 +895,13 @@ export function readCase(store: CaseStore, lib: LawLibrary, caseId: string) {
     clarification: clarificationFor(c),
     evidenceForUpdate: evidenceForUpdate(c),
     review: reviewView(c),
-    reviewContract: { intake: reviewIntakeSpec, analysis: reviewAnalysisSpec },
     stages: Object.fromEntries(
       stages.map((s) => {
         const r = c.stages[s];
         return [s, { status: r.status, blockers: r.blockers, payload: usable(r.status) ? r.payload : null }];
       }),
     ),
-    stageContract: Object.fromEntries(
-      stages.map((s) => [s, { label: stageLabels[s], requiredFields: requiredFields(s), schema: describeSpec(stageSpecs[s]) }]),
-    ),
+    stageContract: stageContracts(),
     lawCatalog: catalogSummary(lib),
   };
 }

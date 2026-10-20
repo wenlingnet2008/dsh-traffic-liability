@@ -14,7 +14,8 @@ import { detectLaw, loadLawLibrary, readRules, searchLaw } from './laws.ts';
 import { exportReview, saveReview } from './review.ts';
 import { reviewIntakeSpec, reviewAnalysisSpec } from './review-model.ts';
 import { methodologyText } from './prompt.ts';
-import { stages, type Registration } from './schema.ts';
+import { stages, stageContracts, type Registration } from './schema.ts';
+import { PayloadValidationError, validationFailure } from './validation.ts';
 
 export const name = 'traffic-liability';
 export const inject = ['tools', 'systemPrompt'];
@@ -53,9 +54,11 @@ export function apply(ctx: Context, config: Config) {
     defineTool({
       name: 'traffic_case_read',
       description:
-        '读取交通事故案件：登记信息、已采纳事实（adoptedFacts）、有效的上游阶段结果、待补充问题和回答状态（clarification）、待更新的证据草稿（evidenceForUpdate）、各阶段字段契约（stageContract，含必填字段与完整字段结构）、法规库摘要和复核契约（reviewContract）。省略 caseId 时返回案件列表。保存阶段前先按 stageContract[stage].schema 核对字段与枚举，可避免校验失败反复重试。',
+        '读取案件、已采纳事实、上游结果及补问状态；阶段格式与业务约束、复核格式按需查询。',
       parameters: {
-        caseId: { type: 'string', description: '案件 ID；省略时列出全部案件' },
+        caseId: { type: 'string', description: '不查询格式时读取此案件；省略则列出案件及六阶段摘要' },
+        stage: { type: 'string', enum: stages, description: '仅查询 stageContract[stage] 的 schema、rules；无需建案，忽略 caseId，与 reviewSection 互斥' },
+        reviewSection: { type: 'string', enum: ['intake', 'analysis'], description: '仅查询 reviewContract[reviewSection]；无需建案，忽略 caseId，与 stage 互斥' },
       },
       output: {
         schema: { type: 'json' },
@@ -63,7 +66,10 @@ export function apply(ctx: Context, config: Config) {
       },
       isConcurrencySafe: () => true,
       async execute(args) {
-        if (!args.caseId) return json({ cases: store.list(), reviewContract: { intake: reviewIntakeSpec, analysis: reviewAnalysisSpec }, note: '用 traffic_case_save 保存 registration 或 traffic_review_save 保存 intake 且不传 caseId 可新建案件' });
+        if (args.stage && args.reviewSection) throw new Error('stage 与 reviewSection 只能指定一个');
+        if (args.stage) return json({ stageContract: stageContracts(args.stage) });
+        if (args.reviewSection) return json({ reviewContract: { [args.reviewSection]: args.reviewSection === 'intake' ? reviewIntakeSpec : reviewAnalysisSpec } });
+        if (!args.caseId) return json({ cases: store.list(), stageContract: stageContracts(), note: '用 traffic_case_save 保存 registration 或 traffic_review_save 保存 intake 且不传 caseId 可新建案件' });
         return json(readCase(store, lib, args.caseId));
       },
     }),
@@ -72,47 +78,65 @@ export function apply(ctx: Context, config: Config) {
   ctx.tools.register(
     defineTool({
       name: 'traffic_case_save',
-      description: `校验并保存一个阶段的结构化结果。阶段顺序：${stageList}，必须按顺序完成。首次保存 registration 时省略 caseId 会新建案件并返回 caseId。payload 是该阶段的对象本身；完整字段与枚举见 traffic_case_read 的 stageContract[stage].schema，提交前先核对。保存后检查 clarification：关键事实阻断时受影响部分保持暂无法判断；未答的条件性问题不阻止先保存附条件建议，申请资料缺项不阻止事故分析。不得代答，确定建议仍须解决影响判断的事实。结构或引用不合法时返回具体错误，修正后重新保存。`,
+      description: `校验并保存一个阶段的结构化结果。顺序：${stageList}。输入不合法返回 saved=false 及 errors，未写入；修正后重试。成功后检查 clarification：关键事实阻断时受影响部分保持暂无法判断；条件性问题允许先保存附条件建议，申请资料缺项不阻止事故分析。不得代答。`,
       parameters: {
         stage: { type: 'string', enum: stages, required: true, description: '阶段名' },
-        payload: { type: 'json', required: true, description: '该阶段的结构化结果对象' },
+        payload: { type: 'json', required: true, description: '该阶段完整对象。首次处理前用 traffic_case_read({stage}) 读取 schema 和 rules，不用空对象试探。校验失败时集中修正 errors 后提交；修正依据在工具结果中，无需查找插件源码' },
         caseId: { type: 'string', description: '案件 ID；仅首次保存 registration 时可省略' },
         title: { type: 'string', description: '新建案件时的标题，可省略' },
       },
       output: {
         schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            saved: { type: 'boolean', required: true },
-            caseId: { type: 'string', required: true },
-            stage: { type: 'string', required: true },
-            status: { type: 'string', required: true },
-            blockers: { type: 'array', items: { type: 'string' }, required: true },
-            nextStage: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
-            clarification: { type: 'json', required: true },
-            note: { type: 'string', required: true },
-          },
+          oneOf: [{
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              saved: { type: 'boolean', const: true, required: true },
+              caseId: { type: 'string', required: true },
+              stage: { type: 'string', required: true },
+              status: { type: 'string', required: true },
+              blockers: { type: 'array', items: { type: 'string' }, required: true },
+              nextStage: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
+              clarification: { type: 'json', required: true },
+              note: { type: 'string', required: true },
+            },
+          }, {
+            type: 'object', additionalProperties: false,
+            properties: {
+              saved: { type: 'boolean', const: false, required: true },
+              stage: { type: 'string', required: true },
+              code: { type: 'string', const: 'validation_failed', required: true },
+              errors: { type: 'array', items: { type: 'json' }, required: true },
+              totalErrors: { type: 'integer', required: true },
+              omittedErrors: { type: 'integer', required: true },
+              correction: { type: 'string', required: true },
+            },
+          }],
         },
         render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
       },
       async execute(args) {
-        const result = submitStage(store, lib, {
-          stage: args.stage,
-          payload: args.payload,
-          ...(args.caseId ? { caseId: args.caseId } : {}),
-          ...(args.title ? { title: args.title } : {}),
-        });
-        return {
-          saved: result.saved,
-          caseId: result.caseId,
-          stage: result.stage,
-          status: result.status,
-          blockers: result.blockers,
-          nextStage: result.nextStage,
-          clarification: json(result.clarification),
-          note: result.note,
-        };
+        try {
+          const result = submitStage(store, lib, {
+            stage: args.stage,
+            payload: args.payload,
+            ...(args.caseId ? { caseId: args.caseId } : {}),
+            ...(args.title ? { title: args.title } : {}),
+          });
+          return {
+            saved: result.saved,
+            caseId: result.caseId,
+            stage: result.stage,
+            status: result.status,
+            blockers: result.blockers,
+            nextStage: result.nextStage,
+            clarification: json(result.clarification),
+            note: result.note,
+          };
+        } catch (error) {
+          if (!(error instanceof PayloadValidationError)) throw error;
+          return json(validationFailure(args.stage, error));
+        }
       },
     }),
   );
@@ -138,11 +162,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.tools.register(
     defineTool({
       name: 'traffic_review_save',
-      description: '保存对交警事故认定书的复核资料或分析，独立于六阶段，可直接导入原文启动。section=intake：首次可省略 caseId 新建案件；analysis 必须用既有 caseId。严格字段契约见 traffic_case_read.reviewContract（无 caseId 也可读）。原认定内容不自动采纳为事实；六方面分析须引用原文位置、证据及已读取法条。缺项用 null 并查看 clarification，用户回答由 traffic_case_answer 记录。',
+      description: '保存对交警事故认定书的复核资料或分析，独立于六阶段，可直接导入原文启动。section=intake：首次可省略 caseId 新建案件；analysis 必须用既有 caseId。原认定内容不自动采纳为事实；六方面分析须引用原文位置、证据及已读取法条。缺项用 null 并查看 clarification，用户回答由 traffic_case_answer 记录。',
       parameters: {
         caseId: { type: 'string', description: '案件 ID；首次 intake 可省略' },
         section: { type: 'string', enum: ['intake', 'analysis'], required: true },
-        payload: { type: 'json', required: true, description: '结构化复核资料或分析对象，未知资料为 null' },
+        payload: { type: 'json', required: true, description: '复核对象；先用 traffic_case_read({reviewSection:section}) 获取 reviewContract[section]，未知资料为 null' },
       },
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       async execute(args) { return json(saveReview(store, lib, args)); },

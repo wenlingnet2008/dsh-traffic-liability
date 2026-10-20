@@ -1,0 +1,27 @@
+{
+  "stageContract": {
+    "registration": {
+      "label": "理解事故",
+      "requiredFields": [
+        "occurredAt",
+        "location",
+        "reportedAt",
+        "jurisdiction",
+        "roadType",
+        "intersectionType",
+        "trafficControl",
+        "parties",
+        "vehicles",
+        "casualties",
+        "propertyLoss",
+        "unknowns"
+      ],
+      "schema": "{occurredAt: string[minLength=1,maxLength=20000] | null, location: string[minLength=1,maxLength=20000], reportedAt: string[minLength=1,maxLength=20000] | null, jurisdiction: string[minLength=1,maxLength=20000], roadType: string[minLength=1,maxLength=20000] | null, intersectionType: string[minLength=1,maxLength=20000] | null, trafficControl: string[minLength=1,maxLength=20000] | null, parties: {id: string[pattern=/^[A-Za-z0-9_-]{1,80}$/], name: string[minLength=1,maxLength=20000], role: \"motor_driver\" | \"nonmotor_driver\" | \"pedestrian\" | \"passenger\" | \"other\"}[][minItems=1,maxItems=100], vehicles: {id: string[pattern=/^[A-Za-z0-9_-]{1,80}$/], partyId: string[pattern=/^[A-Za-z0-9_-]{1,80}$/], type: string[minLength=1,maxLength=20000], details: string[minLength=1,maxLength=20000]}[][maxItems=100], casualties: string[minLength=1,maxLength=20000] | null, propertyLoss: string[minLength=1,maxLength=20000] | null, unknowns: string[minLength=1,maxLength=20000][][maxItems=100]}",
+      "notes": "对象仅允许列出的字段；minLength 按去除首尾空白后的长度校验，maxLength 按原文长度校验。保存时还会校验引用及事实、法规的一致性。",
+      "rules": [
+        "parties、vehicles 的 ID 各自唯一；vehicles[].partyId 引用 parties[].id。",
+        "occurredAt、reportedAt 须可解析，未知用 null；地点和管辖不明时写待补充并列入 unknowns，不编造日期或身份。"
+      ]
+    }
+  }
+}

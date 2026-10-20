@@ -110,10 +110,15 @@ function typeMatches(spec: Spec, value: unknown): boolean {
 }
 
 /**
- * Render a spec as a compact field outline: `key?: type`, `a | b` enums, `type | null` nullable,
- * `type[]` arrays. Kept small because every `traffic_case_read` carries all six stages.
+ * Render a strict object outline with optional keys, unions, arrays, and validation constraints.
+ * @param spec structural schema to describe
+ * @returns compact field types with string, numeric, array, and regular-expression limits
  */
 export function describeSpec(spec: Spec): string {
+  const constrained = (type: string, limits: [string, number | string | undefined][]): string => {
+    const defined = limits.filter(([, value]) => value !== undefined).map(([key, value]) => `${key}=${value}`);
+    return defined.length ? `${type}[${defined.join(',')}]` : type;
+  };
   const render = (s: Spec): string => {
     if ('oneOf' in s) {
       const parts = s.oneOf.map(render);
@@ -121,16 +126,21 @@ export function describeSpec(spec: Spec): string {
     }
     switch (s.type) {
       case 'string':
-        return s.enum ? s.enum.map((value) => JSON.stringify(value)).join(' | ') : 'string';
+        return constrained(s.enum ? s.enum.map((value) => JSON.stringify(value)).join(' | ') : 'string', [
+          ['minLength', s.minLength], ['maxLength', s.maxLength], ['pattern', s.pattern?.toString()],
+        ]);
       case 'number':
       case 'integer':
-        return s.type;
+        return constrained(s.type, [['min', s.min], ['max', s.max]]);
       case 'boolean':
         return 'boolean';
       case 'null':
         return 'null';
-      case 'array':
-        return `${render(s.items)}[]`;
+      case 'array': {
+        const item = render(s.items);
+        const isUnion = 'oneOf' in s.items || (s.items.type === 'string' && !!s.items.enum);
+        return constrained(`${isUnion ? `(${item})` : item}[]`, [['minItems', s.minItems], ['maxItems', s.maxItems]]);
+      }
       case 'object':
         return `{${Object.entries(s.properties)
           .map(([key, value]) => `${key}${value.required ? '' : '?'}: ${render(value)}`)
@@ -478,6 +488,71 @@ export function requiredFields(stage: Stage): string[] {
   return Object.entries(spec.properties)
     .filter(([, s]) => s.required)
     .map(([k]) => k);
+}
+
+/** Summary of a stage's payload; detailed schemas are included only when requested. */
+export interface StageContract {
+  label: string;
+  requiredFields: string[];
+  schema?: string;
+  notes?: string;
+  rules?: readonly string[];
+}
+
+const stageRules: Record<Stage, readonly string[]> = {
+  registration: [
+    'parties、vehicles 的 ID 各自唯一；vehicles[].partyId 引用 parties[].id。',
+    'occurredAt、reportedAt 须可解析，未知用 null；地点和管辖不明时写待补充并列入 unknowns，不编造日期或身份。',
+  ],
+  evidence: [
+    '用户对视频、照片的文字转述属于 statement：materials[].kind 与 observations[].kind 均为 statement，保留 speaker。只有实际读取原始影像才能登记 video/photo 和客观 observation；未取得原件时不得写已核验视频。',
+    'supported 事实必须引用 supportingObservationIds 且无反驳记录；陈述可采纳，程序计算 adoptionBasis，不把 statement_adopted 改称客观观察。',
+    'visualChecks 引用实际影像及同一材料的 observations；no_conflict、conflict、not_relevant 均要求非空 observationIds，无法读取或尚未对照用 unclear，冲突用 disputed。',
+    '有影像时，依赖陈述的 supported 事实须逐项完成 no_conflict 或 not_relevant 对照；未知事实不能靠猜测补成确定事实。',
+    'behaviorFrames 只描述中性行为；supported 引用已采纳事实，conditional 列出未知或争议事实；unknownFactIds 和 openQuestions 不得引用 supported 事实。',
+  ],
+  duties: [
+    'duties 的参与方、事实、法条 ID 必须存在；status=supported 仅引用已采纳事实。legalMatches[].behaviorId 引用 evidence.behaviorFrames[].id。',
+    'elements[].status 为 met/not_met 时 factIds 非空且全部为 supported；unknown 时非空且全部为 unknown/disputed；disputed 至少引用一条 disputed 事实。',
+    'applicability=applicable 要求全部 elements 已满足；conditional 列出未决要件或 missingFactIds；not_applicable 须有 not_met 要件或 contraryFactIds。',
+    'missingFactIds 仅引用 unknown/disputed；contraryFactIds 仅引用 supported。breachStatus=not_established 须有反证、not_met 要件或已满足许可；仅缺少违法证据时用 undetermined。',
+    'normRole=conditional_permission 必须填写 permission，其余为 null；许可 satisfied 对应 applicable+not_established，conditionally_allowed 对应 conditional，not_applicable 对应 not_applicable；许可判断不能写成违反。',
+    'issues[].affectedIds 仅引用当前 payload.duties[].id，不接受 legalMatches 或 relations 的 ID；fact_gap 仅引用 unknown/disputed 事实，detail 只能 supplementary。',
+    '法条引文、所属法律、条号和来源须与读取的原文一致；relations[].issues 引用当前 issues[].id，conflictsWith 引用 relations[].id；履行状态 performed/not_performed 须有已采纳行为事实。',
+  ],
+  faults: [
+    'faults[].dutyId 引用同一参与方的上游 duties；evaluations[].faultId、legalMatchIds 引用本案记录，同一过错只评价一次。',
+    'seriousness.status=scored 时 score 为 1..3，须引用 supported 违反或带 scenarioCondition 的 conditional 违反；其余状态 score=null，依据不足不默认评分。',
+    'majorFaultCandidate=true 时须有 majorFaultReason 和 pendingReviewFactIds。',
+  ],
+  causation: [
+    '每项上游过错均须有因果分析；analyses[].faultId 引用 faults[].id；issues[].affectedIds 仅引用当前 analyses[].id。',
+    'conclusion=supported 须有至少两步机制、反事实事实依据，所依赖义务和事实均已成立，不能仍受非 supplementary 缺项影响。',
+    '时间和参数非 null 时须有事实来源；未知保留 null。timingRequired=false 须写 timingReason，技术审核须写原因。',
+    'contribution 未评分时 score=null；0 须结论 not_established 并引用已采纳的排除事实；3 须结论 supported；conditional 评分须 scenarioCondition。减速或未变道本身不足以排除观察、制动迟延，须结合可观察时点及避免可能性。',
+  ],
+  liability: [
+    '存在待解决的事故事实时不能 recommendationType=supported；conditional 须有主情景、明确条件及 limitations，undetermined 的各方等级均为暂无法判断。',
+    '情景覆盖全部参与方；责任卡片与主情景等级、causalIds 一致；承担责任者须有本人事故因果依据，不按分数求和分责。',
+    '排除原因须有 exclusions 与事实依据，证据不足不等于免责；主情景须覆盖影响建议的全部条件性 issues，blocking 事项不能包装成确定情景。',
+  ],
+};
+
+/**
+ * Describe the stages without needing an existing case.
+ * @param stage return one complete field outline, or omit for all six top-level summaries
+ * @returns stage labels, required fields, and the requested detailed schema
+ */
+export function stageContracts(stage?: Stage): Record<string, StageContract> {
+  return Object.fromEntries((stage ? [stage] : stages).map((s) => [s, {
+    label: stageLabels[s],
+    requiredFields: requiredFields(s),
+    ...(stage ? {
+      schema: describeSpec(stageSpecs[s]),
+      notes: '对象仅允许列出的字段；minLength 按去除首尾空白后的长度校验，maxLength 按原文长度校验。保存时还会校验引用及事实、法规的一致性。',
+      rules: stageRules[s],
+    } : {}),
+  }]));
 }
 
 export interface Registration {

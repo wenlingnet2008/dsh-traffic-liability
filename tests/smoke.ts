@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CaseStore, readCase, submitStage } from '../src/engine.ts';
 import { loadLawLibrary, readRules, ruleInForce, searchLaw } from '../src/laws.ts';
+import { describeSpec, stageContracts, stageSpecs, validate } from '../src/schema.ts';
+import { PayloadValidationError, ValidationIssues, validationFailure } from '../src/validation.ts';
 
 // Law data: an explicit override, the plugin's own data directory, then the original project's copy.
 const candidates = [
@@ -102,6 +104,10 @@ assert.equal(created.status, 'analyzed');
 assert.equal(created.nextStage, 'evidence');
 const caseId = created.caseId;
 
+const beforeInvalidRegistration = store.list();
+assert.throws(() => submitStage(store, lib, { stage: 'registration', payload: { ...registration, occurredAt: 'not-a-date' } }), /时间必须可解析/);
+assert.deepEqual(store.list(), beforeInvalidRegistration, '登记校验失败不得留下空案件');
+
 assert.throws(() => submitStage(store, lib, { caseId, stage: 'duties', payload: {} }), /请先完成前置阶段|缺少必填字段/);
 assert.throws(() => submitStage(store, lib, { caseId, stage: 'evidence', payload: { facts: [] } }), /缺少必填字段/);
 
@@ -174,6 +180,17 @@ assert.throws(
     }),
   /只描述事实/,
 );
+assert.throws(() => submitStage(store, lib, { caseId, stage: 'evidence', payload: {
+  ...evidence,
+  materials: [...evidence.materials, { id: 'visual', title: '影像记录', kind: 'video', source: '测试影像' }],
+  facts: evidence.facts.map((fact) => ({ ...fact, visualChecks: [{ materialId: 'visual', result: 'not_relevant', observationIds: [], reason: '未完成可追溯提取' }] })),
+} }), (error: Error) => {
+  assert.ok(error instanceof PayloadValidationError);
+  assert.deepEqual(error.issues.map((issue) => issue.path), [
+    '$.facts[0].visualChecks[0].observationIds', '$.facts[1].visualChecks[0].observationIds',
+  ]);
+  return true;
+});
 assert.equal(submitStage(store, lib, { caseId, stage: 'evidence', payload: evidence }).status, 'analyzed');
 const view = readCase(store, lib, caseId);
 assert.equal(view.adoptedFacts.length, 1);
@@ -255,6 +272,49 @@ const duties = {
   controlConflicts: [],
   unknowns: [],
 };
+// The same submission reports independent legal-status and issue-reference mistakes.
+const beforeInvalidDuties = store.get(caseId);
+assert.throws(() => submitStage(store, lib, { caseId, stage: 'duties', payload: {
+  ...duties,
+  legalMatches: [{
+    ...legalMatch, normRole: 'behavior_rule', permission: null, applicability: 'applicable', breachStatus: 'not_established',
+    elements: [{ id: 'e_missing', text: '借道条件尚未知', status: 'unknown', factIds: [] }],
+  }],
+  issues: [{ ...duties.issues[0], affectedIds: ['match_B_70', 'rel_A_yield_B'] }],
+} }), (error: Error) => {
+  assert.ok(error instanceof PayloadValidationError);
+  const result = validationFailure('duties', error);
+  assert.equal(result.saved, false);
+  const paths = result.errors.map((issue) => issue.path);
+  assert.ok(paths.includes('$.legalMatches[0].elements[0].factIds'));
+  assert.ok(paths.includes('$.legalMatches[0].applicability'));
+  assert.ok(paths.includes('$.legalMatches[0].breachStatus'));
+  const issue = result.errors.find((item) => item.path === '$.issues[0].affectedIds')!;
+  assert.deepEqual(issue.actual, ['match_B_70', 'rel_A_yield_B']);
+  assert.deepEqual(issue.allowedValues, ['duty_A_slow']);
+  assert.equal(issue.expected, 'duties[].id');
+  return true;
+});
+assert.deepEqual(store.get(caseId), beforeInvalidDuties, '汇总失败不得改动 revision、已保存内容或下游状态');
+const manyErrors = validationFailure('duties', new PayloadValidationError(Array.from({ length: 15 }, (_, index) => ({
+  path: `$.issues[${index}].affectedIds`, message: '引用不存在', actual: Array.from({ length: 30 }, (_, i) => `bad_${i}`),
+  allowedValues: Array.from({ length: 30 }, (_, i) => `duty_${i}`),
+}))));
+assert.equal(manyErrors.errors.length, 12);
+assert.equal(manyErrors.omittedErrors, 3);
+assert.equal(manyErrors.errors[0].actual!.length, 20);
+assert.equal(manyErrors.errors[0].omittedActual, 10);
+assert.equal(manyErrors.errors[0].allowedValues!.length, 20);
+assert.equal(manyErrors.errors[0].omittedAllowedValues, 10);
+assert.throws(() => new ValidationIssues().capture('$.issues', () => { throw new TypeError('unexpected bug'); }), TypeError, '汇总器不能吞掉程序异常');
+assert.throws(() => submitStage(store, lib, { caseId, stage: 'duties', payload: {
+  ...duties, legalMatches: [{ ...legalMatch, behaviorId: 'missing_behavior' }],
+  issues: [{ ...duties.issues[0], affectedIds: ['missing_duty'] }],
+} }), (error: Error) => {
+  assert.ok(error instanceof PayloadValidationError, '无效引用不得造成 TypeError');
+  assert.ok(error.issues.length >= 2, '无效行为引用不妨碍独立检查待查事项');
+  return true;
+});
 assert.throws(
   () =>
     submitStage(store, lib, {
@@ -292,11 +352,21 @@ assert.match(savedDuties.clarification.questions[0].impact, /许可是否成立/
 submitStage(store, lib, { caseId, stage: 'evidence', payload: evidence });
 assert.equal(readCase(store, lib, caseId).stages.duties.status, 'stale');
 
-// stageContract publishes the field outline so save payloads need not be guessed.
-const contract = readCase(store, lib, caseId).stageContract as Record<string, { requiredFields?: string[]; schema?: string }>;
-assert.ok(contract.liability?.requiredFields?.includes('summary'), 'stageContract 仍应保留必填字段');
+// Detailed contracts are queried separately; case reads keep only their small summaries.
+assert.ok(readCase(store, lib, caseId).stageContract.liability.requiredFields.includes('summary'));
+assert.ok(Object.values(readCase(store, lib, caseId).stageContract).every((stage) => !stage.schema));
+const contract = stageContracts('duties');
 assert.match(contract.duties?.schema ?? '', /conditionally_allowed/, 'stageContract 应包含字段枚举');
 assert.match(contract.duties?.schema ?? '', /permission: \{status:/, 'stageContract 应包含嵌套字段结构');
+assert.match(contract.duties?.schema ?? '', /pattern=\/\^\[A-Za-z0-9_-\]/, '记录 ID 格式限制应可查询');
+assert.match(stageContracts('registration').registration.schema ?? '', /\[minItems=1,maxItems=100\]/, '参与方数组最少一项');
+assert.match(stageContracts('registration').registration.schema ?? '', /string\[minLength=1,maxLength=20000\]/, '字符串长度限制应可查询');
+assert.match(stageContracts('faults').faults.schema ?? '', /integer\[min=1,max=3\] \| null/, '评分范围应可查询');
+assert.deepEqual(validate(stageSpecs.registration, { ...registration, parties: [] }), ['$.parties 至少 1 项']);
+assert.deepEqual(validate(stageSpecs.registration, { ...registration, location: ' ' }), ['$.location 不能为空']);
+assert.equal(describeSpec({ type: 'array', items: { type: 'string', enum: ['a', 'b'] }, minItems: 0, maxItems: 2 }), '("a" | "b")[][minItems=0,maxItems=2]');
+assert.equal(describeSpec({ type: 'number', min: 0, max: 0 }), 'number[min=0,max=0]');
+assert.equal(describeSpec({ type: 'string', pattern: /^a$/i }), 'string[pattern=/^a$/i]');
 
 // An unknown accident date no longer blocks: version checks are skipped and the save note says so.
 assert.equal(ruleInForce(lib.byId.get(rule70.ruleId)!.rule, null, '北京市'), null);

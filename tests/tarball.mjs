@@ -91,6 +91,14 @@ try {
     assert.deepEqual(validateJsonSchemaValue(tool.output.schema, value, 'value'), []);
     return value;
   };
+  assert.equal((await call('traffic_case_save', { stage: 'registration', payload: {} })).saved, false, '安装产物返回普通校验结果');
+  const overview = await call('traffic_case_read', {});
+  assert.deepEqual(overview.cases, [], '失败的首次登记不留下空案件');
+  assert.ok(!('reviewContract' in overview));
+  const format = await call('traffic_case_read', { stage: 'duties' });
+  assert.ok(format.stageContract.duties.rules.some((rule) => rule.includes('affectedIds')));
+  assert.deepEqual(Object.keys((await call('traffic_case_read', { reviewSection: 'intake' })).reviewContract), ['intake']);
+  assert.ok(existsSync(join(installed, 'docs', 'upgrade-guide', 'v0.1.3', 'stage-validation', 'guide.zh.md')));
   const created = await call('traffic_case_save', { stage: 'registration', payload: {
     occurredAt: null, reportedAt: null, location: '打包测试路口', jurisdiction: '全国',
     roadType: null, intersectionType: null, trafficControl: null, casualties: null,

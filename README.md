@@ -44,7 +44,7 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 | 工具 | 作用 |
 | --- | --- |
-| `traffic_case_read` | 读取案件概览、已采纳事实、有效上游结果、补问状态、待更新证据草稿、各阶段字段契约（`stageContract`）和法规库摘要；省略 caseId 列出案件 |
+| `traffic_case_read` | 读取案件概览、已采纳事实、有效上游结果、补问状态、证据草稿、阶段摘要和法规库摘要；省略 caseId 列出案件；传 stage 查询该阶段格式与业务约束，传 reviewSection 查询复核格式 |
 | `traffic_case_save` | 校验并保存一个阶段的结果；首次保存 registration 不传 caseId 即新建案件 |
 | `traffic_case_answer` | 保存用户补充回答或“不清楚”；明确回答及撤回会触发证据更新与下游重分析 |
 | `traffic_rule_search` | 精确身份或关键词检索候选法条，返回候选卡；缺条返回 `not_in_library` |
@@ -54,9 +54,15 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 阶段顺序固定：registration、evidence、duties、faults、causation、liability。保存成功后下游已有结果标为 stale。有 blocking 待查事项的阶段状态为 `needs_investigation`，责任建议中受影响的一方必须保持“暂无法判断”。
 
-校验失败以错误返回给模型并说明修正方向，例如引用不存在的事实、把许可条款写成已违反、引用法条库中不存在的原文片段、未知作用分写成 0。
+`traffic_case_save` 的输入校验失败返回 `saved:false`、`code:validation_failed`、`errors`，不写入案件、不更新 revision、不使下游失效，首次登记失败也不会留下空案件。每项错误有 `path`、`message`，引用错误另含错误 ID、允许的引用集合或来源；最多返回 12 项错误、每项最多展示 20 个引用建议，省略数单独列出。结构合法后，证据记录、法律匹配、过错评价、因果分析与待查事项中的独立错误集中收集；依赖无效引用的检查停止，避免误报。存储损坏、读写失败和程序异常仍抛出错误，不能视为普通输入问题。
 
-`stageContract[stage]` 同时给出 `requiredFields` 和紧凑的 `schema`（`key?: type` 可选字段、`a | b` 枚举、`type | null` 可空、`type[]` 数组、`{...}` 嵌套对象）。保存前按它构造 payload，可避免因猜错字段结构而反复校验失败；可空对象缺字段时，错误信息会列出缺失字段并注明“也可以为 null”，不会再只报“必须是 null”。
+首次处理阶段前，调用 `traffic_case_read({stage:"registration"})`（替换为当前阶段）读取 `stageContract[stage]`；无需先建案，传入 stage 时仅查询格式并忽略 caseId。结果含 `requiredFields`、紧凑的 `schema`、`notes` 及当前阶段的业务约束 `rules`：`key?: type` 为可选字段、`a | b` 为枚举、`type | null` 为可空、`type[]` 为数组、`{...}` 为嵌套对象；联合类型的数组元素用括号分组。方括号注明 minLength/maxLength、pattern、min/max、minItems/maxItems；对象禁止额外字段，minLength 按去除首尾空白后的长度校验，maxLength 按原文长度校验。普通列表和读案只含六阶段字段摘要，不重复加载完整阶段或复核格式。
+
+保存前按 schema 和 rules 构造完整 payload，不用空对象试探。例如 duties 的 `issues[].affectedIds` 只能引用当前 `duties[].id`，不是 legalMatches 或 relations 的 ID；要件 unknown 必须引用未知或争议事实，全部要件满足后才能用 applicable。校验失败时集中修正 errors 后重新提交，并检查 saved；工具结果已给出修正依据，不要求模型搜索插件源码。可空对象缺字段时，错误信息列出缺失字段并注明“也可以为 null”。不能通过编造事实、删除必要分析或改为 null 绕过业务约束。
+
+自定义工具调用方须检查 `saved`，复核格式改用显式查询；从 0.1.3 更新的步骤见[升级说明](docs/upgrade-guide/v0.1.3/stage-validation/guide.zh.md)。
+
+用户对视频或照片的文字描述仍是当事人陈述，materials 与 observations 均保留 statement 及 speaker；只有实际读取原始影像才能登记 video/photo 和客观观察，最终回答也须保留来源区别。程序可检查已登记材料及引用的一致性，不能独立证明模型确实读取过原件。
 
 ## 关键事实补问
 
@@ -99,7 +105,7 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 复核对象是交警出具的事故认定书，文书输出为当事人的《道路交通事故认定复核申请书》。它与公安机关出具的复核结论书不同；申请人自行签署并提交。
 
-推荐流程：先用宿主工具读取认定书全文，再调用 `traffic_case_read`（不传 caseId 也返回 `reviewContract`），按契约保存 `traffic_review_save(section=intake)`。首次可省略 caseId 独立建案，随后分析、回答、导出均使用同一 caseId。生成草稿无需先完成六阶段；重新评价因果作用或责任等级时须有有效六阶段分析。
+推荐流程：先用宿主工具读取认定书全文，再调用 `traffic_case_read({reviewSection:"intake"})` 获取 `reviewContract.intake`，按格式保存 `traffic_review_save(section=intake)`；分析格式用 `reviewSection:"analysis"` 获取。格式查询无需 caseId，传入时忽略，reviewSection 与 stage 互斥。首次 intake 可省略 caseId 独立建案，随后分析、回答、导出均使用同一 caseId。生成草稿无需先完成六阶段；重新评价因果作用或责任等级时须有有效六阶段分析。
 
 `intake` 的字段如下，所有字段均须传入，未知字符串用 `null`，数组可为空（原文结论至少一项）：
 
@@ -146,7 +152,7 @@ npm run pack:tarball
 
 `prepack` 会自动重新构建 `lib/index.js`，直接执行 `npm pack` 或 `pnpm pack` 也会先构建。`pack:tarball` 额外检查分发文件清单并写入校验文件，可传目录参数：`npm run pack:tarball -- /path/to/output`。打包使用当前源码，包括尚未提交的修改。
 
-包内包含 JavaScript 运行代码、法规数据、可编辑 Word/文字模板、bundle patch 和说明；不包含案件、上传材料、测试样例或源码。`docx` 为普通运行依赖，安装时由包管理器下载，因此该 tarball 不是完全离线安装包。`@deepseek-ai/dsh-tools` 和 `@deepseek-ai/schemastery` 声明为可选 peer，由运行中的 Harness 共享提供，避免安装另一份宿主服务。
+包内包含 JavaScript 运行代码、法规数据、可编辑 Word/文字模板、bundle patch、说明与升级指南；不包含案件、上传材料、测试样例或源码。`docx` 为普通运行依赖，安装时由包管理器下载，因此该 tarball 不是完全离线安装包。`@deepseek-ai/dsh-tools` 和 `@deepseek-ai/schemastery` 声明为可选 peer，由运行中的 Harness 共享提供，避免安装另一份宿主服务。
 
 兼容范围为 `^0.1.5-rc.2 || ^0.2.0-rc.2`，已通过 `0.1.5-rc.2` 和 `0.2.0-rc.2` 的实际安装及工具测试。Harness 0.2 会按宿主 peer 范围跳过不兼容插件，本版已更新声明。正式版 `0.2.0` 包含在声明范围内；截至 2026-10-15 尚未公开发布，运行验证使用公开的 `0.2.0-rc.2`。
 
@@ -203,5 +209,5 @@ npx tsc -p traffic-liability-plugin/tsconfig.json 2>&1 | grep '^traffic-liabilit
 
 ## 当前限制
 
-- 自动化验证覆盖程序校验和工具补问闭环，尚未在真实模型下走通完整六阶段。文书必要字段由程序生成补问，但未被模型记录为关键未知事故事实的缺项无法由程序独立识别；自然语言提问及回答对应关系仍依赖模型。
+- 自动化验证覆盖程序校验和工具补问闭环；真实会话已走通六阶段，但减少校验重试的效果仍须在安装更新并重启后用新会话验证。文书必要字段由程序生成补问，但未被模型记录为关键未知事故事实的缺项无法由程序独立识别；自然语言提问及回答对应关系仍依赖模型。
 - tarball 支持脱离插件 checkout 安装，仍依赖兼容的 Harness 提供宿主服务；尚未验证所有 Harness 版本及打包可执行程序的组合。

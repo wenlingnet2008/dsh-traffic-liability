@@ -1,0 +1,58 @@
+{
+  "saved": false,
+  "stage": "registration",
+  "code": "validation_failed",
+  "errors": [
+    {
+      "path": "$.occurredAt",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.location",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.reportedAt",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.jurisdiction",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.roadType",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.intersectionType",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.trafficControl",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.parties",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.vehicles",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.casualties",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.propertyLoss",
+      "message": "缺少必填字段"
+    },
+    {
+      "path": "$.unknowns",
+      "message": "缺少必填字段"
+    }
+  ],
+  "totalErrors": 12,
+  "omittedErrors": 0,
+  "correction": "本次未保存。保留现有 payload，只修正 errors 中的字段后重试；约束见 traffic_case_read({stage})。不得编造事实或删去必要分析以通过校验。"
+}
