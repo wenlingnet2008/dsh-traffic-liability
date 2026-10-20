@@ -493,6 +493,14 @@ function validateFaults(c: CaseRecord, p: Faults) {
 
 function validateContribution(c: CaseRecord, a: CausalAnalysis) {
   const k = a.contribution;
+  if (a.conclusion === 'undetermined') {
+    ensure(k.status !== 'scored' && k.score === null && k.exclusionFactIds.length === 0, `因果分析 ${a.id} 作用未知时不得评分或填写排除事实；保留 undetermined 和 score=null`);
+    return;
+  }
+  if (a.conclusion === 'not_established') {
+    ensure(k.exclusionFactIds.length > 0, `因果分析 ${a.id} 排除原因必须引用已采纳的排除事实；尚未证明作用时用 undetermined 和 score=null`);
+    checkFacts(c, k.exclusionFactIds, true);
+  }
   if (k.status !== 'scored') {
     ensure(k.score === null, `因果分析 ${a.id} 未评分时作用分必须为 null，不能用 0 代替未知`);
     return;
@@ -519,27 +527,30 @@ function validateCausation(c: CaseRecord, p: Causation): string[] {
   p.analyses.forEach((a, index) => errors.capture(`$.analyses[${index}]`, () => {
     references([a.faultId], faults, `因果分析 ${a.id} 的过错`);
     const fault = faults.find((x) => x.id === a.faultId)!;
+    const related = [...p.issues.filter((i) => i.affectedIds.includes(a.id)), ...(c.stages.duties.payload as Duties).issues.filter((i) => i.affectedIds.includes(fault.dutyId))];
     const supported = a.conclusion === 'supported';
     const timingOptional = a.timingRequired === false;
     if (timingOptional) ensure(!!a.timingReason?.trim(), `因果分析 ${a.id} 声明精确时序不影响判断时必须用 timingReason 说明理由`);
     if (supported) {
       ensure(a.mechanism.length >= 2 && a.counterfactual.factIds.length > 0, `因果分析 ${a.id} 的确定结论需要至少两步中间机制和反事实事实依据`);
-      ensure(!p.issues.some((i) => i.affectedIds.includes(a.id) && i.severity !== 'supplementary'), `因果分析 ${a.id} 仍受条件性缺项影响时，conclusion 应为 conditional`);
+      ensure(!related.some((i) => i.severity !== 'supplementary'), `因果分析 ${a.id} 仍受上游或当前条件性缺项影响时，conclusion 应为 conditional`);
       ensure(fault.category === a.outcome, `因果分析 ${a.id}：独立违法、证据不足或损害扩大过错不能直接作为碰撞原因`);
       ensure(fault.pendingConditions.length === 0, `因果分析 ${a.id}：过错仍有待查条件，不能支持确定因果结论`);
       ensure(duties.find((x) => x.id === fault.dutyId)!.status === 'supported', `因果分析 ${a.id}：义务为条件性时不能支持确定因果结论`);
       checkFacts(c, fault.factIds, true);
       ensure(a.disputedFactIds.length === 0, `因果分析 ${a.id} 依赖争议事实，结论必须是条件性的`);
     }
+    if (a.conclusion === 'not_established') {
+      ensure(fault.pendingConditions.length === 0, `因果分析 ${a.id} 的上游过错仍有待查条件，不能认定已排除；作用未知用 undetermined`);
+      ensure(!related.some((i) => i.severity !== 'supplementary'), `因果分析 ${a.id} 仍受上游或当前条件性缺项影响，不能认定已排除；用 undetermined 或 conditional`);
+    }
     for (const step of a.mechanism) checkFacts(c, step.factIds, supported);
     checkFacts(c, a.counterfactual.factIds, supported);
     checkFacts(c, a.disputedFactIds, false);
     ensure(a.disputedFactIds.every((id) => factsOf(c).find((f) => f.id === id)?.status !== 'supported'), `因果分析 ${a.id}：已采纳事实不能在下游重新标为争议`);
-    const labels: Record<string, string> = { hazardAppeared: '危险出现', observable: '可被合理观察', discovered: '实际发现', responseStarted: '开始采取措施' };
     for (const [key, moment] of Object.entries(a.timeline)) {
       checkFacts(c, moment.factIds, supported);
-      if (moment.value !== null) ensure(moment.factIds.length > 0, `因果分析 ${a.id}：${labels[key]}时间必须有事实来源`);
-      if (a.conclusion !== 'not_established' && moment.value === null && !timingOptional) blockers.push(`${a.id}：${labels[key]}的关键时间未知，需要补充调查`);
+      if (moment.value !== null) ensure(moment.factIds.length > 0, `因果分析 ${a.id}：${key}时间必须有事实来源`);
     }
     for (const param of a.parameters) {
       checkFacts(c, param.factIds, supported);
@@ -548,13 +559,12 @@ function validateCausation(c: CaseRecord, p: Causation): string[] {
         ensure(param.range[0]! <= param.range[1]!, `因果分析 ${a.id}：参数 ${param.name} 区间倒置`);
         if (param.value !== null) ensure(param.range[0]! <= param.value && param.value <= param.range[1]!, `因果分析 ${a.id}：参数 ${param.name} 不在区间内`);
       }
-      if (param.required && (param.value === null || param.factIds.length === 0)) blockers.push(`${a.id}：关键参数 ${param.name} 未知，返回事实调查`);
     }
     if (a.technicalReviewRequired) {
       ensure(a.technicalReviewReason !== null, `因果分析 ${a.id} 需要专业审核时必须说明原因`);
-      blockers.push(`${a.id}：需要鉴定或专业审核：${a.technicalReviewReason}`);
     }
     validateContribution(c, a);
+    blockers.push(...causalRequirements(a).map((requirement) => `${a.id}：${requirement.message}`));
   }));
   for (const fault of faults) errors.check(p.analyses.some((a) => a.faultId === fault.id), '$.analyses', `过错 ${fault.id} 缺少因果分析`);
   errors.capture('$', () => { blockers.push(...validateIssues(c, 'causation', p.issues, p.analyses.map((a) => a.id))); });
@@ -573,19 +583,24 @@ function assertGradeCombination(assignments: { partyId: string; level: string }[
   }
 }
 function causalRequirements(a: CausalAnalysis) {
-  const result: string[] = [];
+  const result: { path: string; message: string }[] = [];
   if (a.conclusion === 'not_established') return result;
+  if (a.conclusion === 'undetermined') result.push({ path: '.conclusion', message: '因果作用尚无法判断，需补充事实或明确条件' });
   const timingOptional = a.timingRequired === false && !!a.timingReason?.trim();
-  if (!timingOptional && Object.values(a.timeline).some((m) => m.value === null)) result.push('关键时间未知');
-  if (a.parameters.some((p) => p.required && (p.value === null || !p.factIds.length))) result.push('关键参数未知');
-  if (a.technicalReviewRequired) result.push('需要专业技术审核');
+  if (!timingOptional) for (const [key, moment] of Object.entries(a.timeline)) {
+    if (moment.value === null) result.push({ path: `.timeline.${key}.value`, message: `关键时间 ${key} 未知，需要补充调查` });
+  }
+  a.parameters.forEach((parameter, index) => {
+    if (parameter.required && (parameter.value === null || !parameter.factIds.length)) result.push({ path: `.parameters[${index}]`, message: `关键参数 ${parameter.name} 未知，返回事实调查` });
+  });
+  if (a.technicalReviewRequired) result.push({ path: '.technicalReviewRequired', message: `需要鉴定或专业审核：${a.technicalReviewReason}` });
   return result;
 }
 function relatedIssues(c: CaseRecord, causalIds: string[]) {
   const causal = c.stages.causation.payload as Causation;
   const duties = c.stages.duties.payload as Duties;
   const faults = (c.stages.faults.payload as Faults).faults;
-  const dutyIds = causal.analyses.filter((a) => causalIds.includes(a.id)).map((a) => faults.find((f) => f.id === a.faultId)!.dutyId);
+  const dutyIds = causal.analyses.filter((a) => causalIds.includes(a.id)).map((a) => faults.find((f) => f.id === a.faultId)?.dutyId);
   return [
     ...duties.issues.filter((i) => i.affectedIds.some((id) => dutyIds.includes(id))),
     ...causal.issues.filter((i) => i.affectedIds.some((id) => causalIds.includes(id))),
@@ -593,102 +608,136 @@ function relatedIssues(c: CaseRecord, causalIds: string[]) {
 }
 
 function validateLiability(c: CaseRecord, lib: LawLibrary, p: Liability, reg: Registration) {
+  const errors = new ValidationIssues();
   const causal = c.stages.causation.payload as Causation;
   const duties = c.stages.duties.payload as Duties;
   const faults = (c.stages.faults.payload as Faults).faults;
   const facts = factsOf(c);
-  unique(p.parties.map((x) => ({ id: x.partyId })), '责任参与方');
-  ensure(p.parties.length === reg.parties.length, '责任建议应覆盖所有参与方');
-  const hasOwnCause = (partyId: string, ids: string[]) =>
-    causal.analyses.some((a) => ids.includes(a.id) && a.outcome === 'accident' && a.conclusion !== 'not_established' && faults.find((f) => f.id === a.faultId)?.partyId === partyId);
-  for (const party of p.parties) {
-    references([party.partyId], reg.parties, '责任参与方');
-    references(party.causalIds, causal.analyses, `参与方 ${party.partyId} 的因果分析`);
-    if (party.level === '暂无法判断') continue;
-    const noFault = party.level === '无责';
-    ensure((noFault || party.causalIds.length > 0) && party.ruleIds.length > 0, `参与方 ${party.partyId} 的责任等级必须引用因果分析和责任评价规则`);
-    const rules = party.ruleIds.map((id) => ruleOf(lib, id, `参与方 ${party.partyId} 的责任规则`));
-    for (const r of rules) inForce(lib, r.id, reg, `参与方 ${party.partyId} 的责任评价法条`);
-    ensure(rules.some((r) => /责任/.test(r.applicability) && /责任/.test(r.text)), `参与方 ${party.partyId} 缺少责任评价规则，不能仅凭通行义务推导等级`);
-    if (!noFault) ensure(hasOwnCause(party.partyId, party.causalIds), `参与方 ${party.partyId} 承担责任须有该方自身的事故因果依据；仅有义务或行为未知，不能分配责任`);
-    const linked = causal.analyses.filter((a) => party.causalIds.includes(a.id));
-    if (linked.some((a) => a.conclusion === 'conditional')) ensure(party.conditions.length > 0, `参与方 ${party.partyId} 的条件性因果结论必须在责任建议中列出条件`);
-    const own = causal.analyses.filter((a) => faults.find((f) => f.id === a.faultId)?.partyId === party.partyId && a.conclusion !== 'not_established').map((a) => a.id);
-    const relevant = [...new Set([...party.causalIds, ...own])];
-    ensure(!relatedIssues(c, relevant).some((i) => i.severity === 'blocking'), `参与方 ${party.partyId} 的责任建议仍有关键事实或法规阻断，须保留暂无法判断`);
-    ensure(!causal.analyses.filter((a) => relevant.includes(a.id)).some((a) => causalRequirements(a).length), `参与方 ${party.partyId} 的关键因果或法规问题尚未解决，责任等级应暂无法判断`);
-  }
-  assertGradeCombination(p.parties);
   const allIssues = [...duties.issues, ...causal.issues];
-  const checkExclusions = (assignments: { partyId: string; level: string }[], exclusions: CausalExclusion[], excludedIds: string[], primary: boolean) => {
-    ensure(new Set(exclusions.map((e) => e.causalId)).size === exclusions.length, '排除原因的说明不能重复');
-    ensure(excludedIds.length === exclusions.length && exclusions.every((e) => excludedIds.includes(e.causalId)), '每个被排除的原因须有 exclusions 说明依据，未查明不等于无责');
-    for (const e of exclusions) {
-      const cause = causal.analyses.find((a) => a.id === e.causalId);
-      ensure(!!cause, `排除的因果分析不存在：${e.causalId}`);
-      ensure(cause!.conclusion !== 'supported', `已成立的事故原因 ${e.causalId} 不能在责任阶段直接排除；请先修正上游因果分析`);
-      ensure(!/未查明|未确认|无法确认|不能确认|不清楚|未提供|缺乏证据|没有证据|证据不足/.test(e.explanation), `排除 ${e.causalId}：不能用未查明或证据不足作为免责依据；请写明确的事实或假设`);
-      if (e.basis === 'supported_fact') {
-        ensure(cause!.conclusion === 'not_established', `排除 ${e.causalId}：事实性排除须先在因果阶段明确不成立`);
-        ensure(e.factIds.length > 0 && e.factIds.every((id) => facts.some((f) => f.id === id && f.status === 'supported')), `排除 ${e.causalId}：事实性排除须引用已采纳事实`);
-      } else {
-        const related = relatedIssues(c, [e.causalId]);
-        ensure(e.issueIds.length > 0 && e.issueIds.every((id) => related.some((i) => i.id === id && i.severity === 'conditional')), `排除 ${e.causalId}：假设性排除须绑定该原因的条件性缺项，不能假设推翻已知事实`);
-        ensure(!primary || !assignments.some((a) => a.level === '全责'), '其他参与方仅凭假设免责时，不得将全责情景选为默认结论；可作为其他可能情景');
-        ensure(p.recommendationType === 'conditional', '假设性免责只能用于条件性建议');
-      }
-    }
-    for (const a of assignments.filter((a) => a.level === '无责')) {
-      const ownCauses = causal.analyses.filter((cause) => cause.outcome === 'accident' && faults.find((f) => f.id === cause.faultId)?.partyId === a.partyId);
-      ensure(ownCauses.every((cause) => excludedIds.includes(cause.id)), `参与方 ${a.partyId} 无责必须逐项说明其候选事故原因为何被排除；尚不能成立不等于已经排除`);
+  const clarification = clarificationFor(c, true);
+  errors.check(p.recommendationType !== 'supported' || clarification.pendingCount === 0, '$.recommendationType', '存在影响定责的待回答问题，不能给出无条件的确定建议；可先保存明确假设下的条件性建议或暂无法判断，不要求答完所有问题');
+  errors.check(p.recommendationType !== 'supported' || clarification.unresolved.length === 0, '$.recommendationType', '关键补问事项仍然未知或存在争议，只能给出明确条件下的建议或暂无法判断');
+  errors.check(!(clarification.pendingCount || clarification.unresolved.length) || p.limitations.length > 0, '$.limitations', '仍有未解决的事故事实，责任建议须在 limitations 中说明限制');
+  errors.capture('$.parties', () => unique(p.parties.map((x) => ({ id: x.partyId })), '责任参与方'));
+  errors.check(p.parties.length === reg.parties.length && reg.parties.every((party) => p.parties.some((item) => item.partyId === party.id)), '$.parties', '责任建议应覆盖所有参与方', { missingValues: reg.parties.filter((party) => !p.parties.some((item) => item.partyId === party.id)).map((party) => party.id) });
+  const hasOwnCause = (partyId: string, ids: string[]) =>
+    causal.analyses.some((a) => ids.includes(a.id) && a.outcome === 'accident' && (a.conclusion === 'supported' || a.conclusion === 'conditional') && faults.find((f) => f.id === a.faultId)?.partyId === partyId);
+  const checkRequirements = (partyId: string, ids: string[], path: string) => {
+    const relevant = causal.analyses.filter((a) => ids.includes(a.id) || (a.conclusion !== 'not_established' && faults.find((f) => f.id === a.faultId)?.partyId === partyId));
+    const blocking = relatedIssues(c, relevant.map((a) => a.id)).filter((i) => i.severity === 'blocking');
+    errors.check(blocking.length === 0, path, `参与方 ${partyId} 的责任建议仍有关键事实或法规阻断，须保留暂无法判断`, {
+      actual: blocking.map((i) => i.id), expected: '暂无法判断',
+      relatedPaths: blocking.map((issue) => duties.issues.includes(issue) ? `stages.duties.payload.issues[${duties.issues.indexOf(issue)}]` : `stages.causation.payload.issues[${causal.issues.indexOf(issue)}]`),
+    });
+    for (const analysis of relevant) {
+      const requirements = causalRequirements(analysis);
+      errors.check(requirements.length === 0, path, `参与方 ${partyId} 的关键因果问题尚未解决：${analysis.id}；${requirements.map((item) => item.message).join('；')}；责任等级应暂无法判断`, {
+        actual: [analysis.id], expected: '暂无法判断；保留上游调查要求，补充事实后重新分析',
+        relatedPaths: requirements.map((item) => `stages.causation.payload.analyses[${causal.analyses.indexOf(analysis)}]${item.path}`),
+      });
     }
   };
-  ensure(new Set(p.scenarios.map((s) => s.id)).size === p.scenarios.length, '情景 ID 重复');
+  p.parties.forEach((party, index) => {
+    const path = `$.parties[${index}]`;
+    errors.capture(`${path}.partyId`, () => references([party.partyId], reg.parties, '责任参与方'));
+    errors.capture(`${path}.causalIds`, () => references(party.causalIds, causal.analyses, `参与方 ${party.partyId} 的因果分析`));
+    if (party.level === '暂无法判断') return;
+    const noFault = party.level === '无责';
+    errors.check(noFault || party.causalIds.length > 0, `${path}.causalIds`, `参与方 ${party.partyId} 的责任等级必须引用因果分析`);
+    errors.check(party.ruleIds.length > 0, `${path}.ruleIds`, `参与方 ${party.partyId} 的责任等级必须引用责任评价规则`);
+    party.ruleIds.forEach((id, ruleIndex) => errors.capture(`${path}.ruleIds[${ruleIndex}]`, () => inForce(lib, id, reg, `参与方 ${party.partyId} 的责任评价法条`)));
+    const rules = party.ruleIds.flatMap((id) => lib.byId.get(id)?.rule ?? []);
+    errors.check(rules.some((rule) => /责任/.test(rule.applicability) && /责任/.test(rule.text)), `${path}.ruleIds`, `参与方 ${party.partyId} 缺少责任评价规则，不能仅凭通行义务推导等级`, { expected: '事故责任评价法条，例如实施条例第九十一条；先检索并读取原文', allowedValues: lib.entries.filter((entry) => entry.lawId === 'road_traffic_safety_regulations' && entry.articleNumber === 91).map((entry) => entry.rule.id) });
+    if (!noFault) errors.check(hasOwnCause(party.partyId, party.causalIds), `${path}.causalIds`, `参与方 ${party.partyId} 承担责任须有该方自身的事故因果依据；仅有义务或行为未知，不能分配责任`);
+    if (causal.analyses.some((a) => party.causalIds.includes(a.id) && a.conclusion === 'conditional')) errors.check(party.conditions.length > 0, `${path}.conditions`, `参与方 ${party.partyId} 的条件性因果结论必须在责任建议中列出条件`);
+    checkRequirements(party.partyId, party.causalIds, `${path}.level`);
+  });
+  errors.capture('$.parties', () => assertGradeCombination(p.parties));
+
+  const checkExclusions = (assignments: { partyId: string; level: string }[], exclusions: CausalExclusion[], excludedIds: string[], primary: boolean, path: string) => {
+    errors.check(new Set(exclusions.map((e) => e.causalId)).size === exclusions.length, `${path}.exclusions`, '排除原因的说明不能重复');
+    errors.check(excludedIds.length === exclusions.length && exclusions.every((e) => excludedIds.includes(e.causalId)), `${path}.exclusions`, '每个被排除的原因须有 exclusions 说明依据，未查明不等于无责', { missingValues: excludedIds.filter((id) => !exclusions.some((e) => e.causalId === id)) });
+    exclusions.forEach((exclusion, index) => {
+      const entryPath = `${path}.exclusions[${index}]`;
+      const cause = causal.analyses.find((a) => a.id === exclusion.causalId);
+      errors.check(!!cause, `${entryPath}.causalId`, `排除的因果分析不存在：${exclusion.causalId}`, { actual: [exclusion.causalId], allowedValues: causal.analyses.map((a) => a.id) });
+      errors.capture(`${entryPath}.factIds`, () => checkFacts(c, exclusion.factIds, true));
+      errors.capture(`${entryPath}.issueIds`, () => references(exclusion.issueIds, allIssues, '排除原因的待查事项'));
+      if (!cause) return;
+      errors.check(cause.conclusion !== 'supported', `${entryPath}.causalId`, `已成立的事故原因 ${cause.id} 不能在责任阶段直接排除；请核对上游依据，不能为通过校验改写结论`);
+      errors.check(!/未查明|未确认|无法确认|不能确认|不清楚|未提供|缺乏证据|没有证据|证据不足/.test(exclusion.explanation), `${entryPath}.explanation`, `排除 ${cause.id}：不能用未查明或证据不足作为免责依据；请写明确的事实或假设`);
+      if (exclusion.basis === 'supported_fact') {
+        errors.check(cause.conclusion === 'not_established' && cause.contribution.exclusionFactIds.length > 0, `${entryPath}.basis`, `排除 ${cause.id}：事实性排除须先在因果阶段用事实明确排除；尚不能成立不等于已经排除`, { expected: 'not_established 且 contribution.exclusionFactIds 非空' });
+        errors.check(exclusion.factIds.length > 0 && exclusion.factIds.every((id) => facts.some((f) => f.id === id && f.status === 'supported')), `${entryPath}.factIds`, `排除 ${cause.id}：事实性排除须引用已采纳事实`);
+        const unresolved = relatedIssues(c, [cause.id]).filter((issue) => issue.severity !== 'supplementary');
+        const fault = faults.find((item) => item.id === cause.faultId);
+        errors.check(unresolved.length === 0 && fault?.pendingConditions.length === 0, `${entryPath}.basis`, `排除 ${cause.id}：上游仍有影响该原因的待查条件，不能以引用任意已采纳事实代替排除依据`, { actual: unresolved.map((issue) => issue.id), relatedPaths: [`stages.faults.payload.faults[${faults.indexOf(fault!)}].pendingConditions`] });
+      } else {
+        const related = relatedIssues(c, [cause.id]).filter((issue) => issue.severity === 'conditional');
+        errors.check(exclusion.issueIds.length > 0 && exclusion.issueIds.every((id) => related.some((issue) => issue.id === id)), `${entryPath}.issueIds`, `排除 ${cause.id}：假设性排除须绑定该原因的条件性缺项，不能假设推翻已知事实`, { allowedValues: related.map((issue) => issue.id) });
+        errors.check(!primary || !assignments.some((a) => a.level === '全责'), `${entryPath}.basis`, '其他参与方仅凭假设免责时，不得将全责情景选为默认结论；可作为其他可能情景');
+        errors.check(p.recommendationType === 'conditional', '$.recommendationType', '假设性免责只能用于条件性建议');
+      }
+    });
+    assignments.forEach((assignment, index) => {
+      if (assignment.level !== '无责') return;
+      const missing = causal.analyses.filter((cause) => cause.outcome === 'accident' && faults.find((fault) => fault.id === cause.faultId)?.partyId === assignment.partyId && !excludedIds.includes(cause.id));
+      errors.check(missing.length === 0, `${path}.excludedCausalIds`, `参与方 ${assignment.partyId} 无责必须逐项说明其候选事故原因为何被排除；尚不能成立不等于已经排除`, { missingValues: missing.map((cause) => cause.id) });
+      const unresolved = causal.analyses.filter((cause) => cause.outcome === 'accident' && cause.conclusion === 'undetermined' && faults.find((fault) => fault.id === cause.faultId)?.partyId === assignment.partyId);
+      if (primary) errors.check(unresolved.length === 0, `${path}.${path === '$' ? 'parties' : 'assignments'}[${index}].level`, `参与方 ${assignment.partyId} 的候选事故作用尚无法判断，不能在主结论中确定无责；保留暂无法判断`, { actual: unresolved.map((cause) => cause.id) });
+    });
+  };
+
+  errors.capture('$.scenarios', () => unique(p.scenarios, '情景'));
+  if (p.recommendationType !== 'supported') checkExclusions([], p.exclusions, p.exclusions.map((exclusion) => exclusion.causalId), false, '$');
   const conditions = new Set<string>();
-  for (const s of p.scenarios) {
-    ensure(s.excludedCausalIds.every((id) => causal.analyses.some((a) => a.id === id)), `情景 ${s.id} 排除的原因不存在`);
-    for (const a of s.assignments) {
-      ensure(a.causalIds.every((id) => causal.analyses.some((x) => x.id === id)), `情景 ${s.id} 的分责引用了不存在的因果分析`);
-      ensure(!a.causalIds.some((id) => s.excludedCausalIds.includes(id)), `情景 ${s.id} 已经排除的原因不能再用于分责`);
-      if (a.level !== '无责' && a.level !== '暂无法判断') ensure(hasOwnCause(a.partyId, a.causalIds), `情景 ${s.id} 中 ${a.partyId} 承担责任必须有自身因果依据，不能因行为未知而分配次责`);
-    }
-    const normalized = s.condition.replace(/[\s，,。；;：:]/g, '');
-    ensure(!conditions.has(normalized), '同一条件不能列出两套不同责任结果');
+  p.scenarios.forEach((scenario, index) => {
+    const path = `$.scenarios[${index}]`;
+    errors.capture(`${path}.excludedCausalIds`, () => references(scenario.excludedCausalIds, causal.analyses, `情景 ${scenario.id} 排除的原因`));
+    scenario.assignments.forEach((assignment, assignmentIndex) => {
+      const entryPath = `${path}.assignments[${assignmentIndex}]`;
+      errors.capture(`${entryPath}.causalIds`, () => references(assignment.causalIds, causal.analyses, `情景 ${scenario.id} 的因果分析`));
+      errors.check(!assignment.causalIds.some((id) => scenario.excludedCausalIds.includes(id)), `${entryPath}.causalIds`, `情景 ${scenario.id} 已经排除的原因不能再用于分责`, { actual: assignment.causalIds.filter((id) => scenario.excludedCausalIds.includes(id)) });
+      if (assignment.level !== '无责' && assignment.level !== '暂无法判断') {
+        errors.check(hasOwnCause(assignment.partyId, assignment.causalIds), `${entryPath}.causalIds`, `情景 ${scenario.id} 中 ${assignment.partyId} 承担责任必须有自身因果依据，不能因行为未知而分配次责`);
+        checkRequirements(assignment.partyId, assignment.causalIds, `${entryPath}.level`);
+      }
+    });
+    const normalized = scenario.condition.replace(/[\s，,。；;：:]/g, '');
+    errors.check(!conditions.has(normalized), `${path}.condition`, '同一条件不能列出两套不同责任结果');
     conditions.add(normalized);
-    ensure(
-      s.assignments.length === p.parties.length && new Set(s.assignments.map((a) => a.partyId)).size === p.parties.length && s.assignments.every((a) => p.parties.some((x) => x.partyId === a.partyId)),
-      `情景 ${s.id} 必须覆盖全部参与方且不能重复`,
-    );
-    assertGradeCombination(s.assignments);
-    checkExclusions(s.assignments, s.exclusions, s.excludedCausalIds, s.id === p.primaryScenarioId);
-    ensure(s.issueIds.every((id) => allIssues.some((i) => i.id === id)), `情景 ${s.id} 引用的待查事项不存在`);
-    ensure(s.issueIds.every((id) => allIssues.find((i) => i.id === id)?.severity !== 'blocking'), `情景 ${s.id}：关键阻断不能包装为已具备依据的情景建议`);
-  }
-  const primary = p.scenarios.find((s) => s.id === p.primaryScenarioId);
+    errors.check(scenario.assignments.length === p.parties.length && new Set(scenario.assignments.map((a) => a.partyId)).size === p.parties.length && scenario.assignments.every((a) => p.parties.some((party) => party.partyId === a.partyId)), `${path}.assignments`, `情景 ${scenario.id} 必须覆盖全部参与方且不能重复`);
+    errors.capture(`${path}.assignments`, () => assertGradeCombination(scenario.assignments));
+    checkExclusions(scenario.assignments, scenario.exclusions, scenario.excludedCausalIds, scenario.id === p.primaryScenarioId, path);
+    errors.capture(`${path}.issueIds`, () => references(scenario.issueIds, allIssues, `情景 ${scenario.id} 的待查事项`));
+    errors.check(!scenario.issueIds.some((id) => allIssues.find((issue) => issue.id === id)?.severity === 'blocking'), `${path}.issueIds`, `情景 ${scenario.id}：关键阻断不能包装为已具备依据的情景建议`);
+  });
+  const primary = p.scenarios.find((scenario) => scenario.id === p.primaryScenarioId);
   if (p.recommendationType === 'conditional') {
-    ensure(!!primary, '条件性责任建议必须选定一个主情景并写明成立条件');
-    ensure(p.parties.some((x) => x.level !== '暂无法判断'), '条件性建议至少给出一方的责任等级，不能全部暂无法判断');
-    ensure(p.parties.every((x) => primary!.assignments.find((a) => a.partyId === x.partyId)?.level === x.level), '主情景与责任卡片等级不一致');
-    ensure(p.parties.every((x) => !x.causalIds.some((id) => primary!.excludedCausalIds.includes(id))), '责任卡片不能引用主情景已排除的原因');
-    ensure(
-      p.parties.every((x) => [...x.causalIds].sort().join('|') === [...(primary!.assignments.find((a) => a.partyId === x.partyId)?.causalIds ?? [])].sort().join('|')),
-      '责任卡片与主情景采用的因果依据不一致',
-    );
-    const conditional = relatedIssues(c, p.parties.flatMap((x) => x.causalIds)).filter((i) => i.severity === 'conditional');
-    ensure(conditional.every((i) => primary!.issueIds.includes(i.id)), '主情景须覆盖影响建议的全部条件性缺项');
+    errors.check(!!primary, '$.primaryScenarioId', '条件性责任建议必须选定一个主情景并写明成立条件', { allowedValues: p.scenarios.map((scenario) => scenario.id) });
+    errors.check(p.parties.some((party) => party.level !== '暂无法判断'), '$.recommendationType', '条件性建议至少给出一方的责任等级，不能全部暂无法判断');
+    if (primary) {
+      p.parties.forEach((party, index) => {
+        const assignment = primary.assignments.find((item) => item.partyId === party.partyId);
+        errors.check(assignment?.level === party.level, `$.parties[${index}].level`, '主情景与责任卡片等级不一致', { expected: assignment?.level });
+        errors.check(!party.causalIds.some((id) => primary.excludedCausalIds.includes(id)), `$.parties[${index}].causalIds`, '责任卡片不能引用主情景已排除的原因');
+        errors.check([...party.causalIds].sort().join('|') === [...(assignment?.causalIds ?? [])].sort().join('|'), `$.parties[${index}].causalIds`, '责任卡片与主情景采用的因果依据不一致', { expected: '与主情景对应参与方的 causalIds 一致' });
+      });
+      const conditional = relatedIssues(c, p.parties.flatMap((party) => party.causalIds)).filter((issue) => issue.severity === 'conditional');
+      const missing = conditional.filter((issue) => !primary.issueIds.includes(issue.id));
+      errors.check(missing.length === 0, `$.scenarios[${p.scenarios.indexOf(primary)}].issueIds`, '主情景须覆盖影响建议的全部条件性缺项', { actual: primary.issueIds, missingValues: missing.map((issue) => issue.id), allowedValues: allIssues.filter((issue) => issue.severity !== 'blocking').map((issue) => issue.id) });
+    }
   } else {
-    ensure(p.primaryScenarioId === null, '仅条件性建议可以选择主情景');
-    if (p.recommendationType === 'undetermined') ensure(p.parties.every((x) => x.level === '暂无法判断'), '无法判断时不得在责任卡片中给确定等级');
+    errors.check(p.primaryScenarioId === null, '$.primaryScenarioId', '仅条件性建议可以选择主情景');
+    if (p.recommendationType === 'undetermined') errors.check(p.parties.every((party) => party.level === '暂无法判断'), '$.parties', '无法判断时不得在责任卡片中给确定等级');
     else {
-      checkExclusions(p.parties, p.exclusions, p.exclusions.map((e) => e.causalId), true);
-      ensure(p.parties.every((x) => x.level !== '暂无法判断'), '有依据的建议必须覆盖全部参与方');
-      const linked = p.parties.flatMap((x) => x.causalIds);
-      ensure(
-        !causal.analyses.some((a) => linked.includes(a.id) && a.conclusion === 'conditional') && !relatedIssues(c, linked).some((i) => i.severity === 'conditional'),
-        '仍依赖条件时应输出条件性建议',
-      );
+      checkExclusions(p.parties, p.exclusions, p.exclusions.map((exclusion) => exclusion.causalId), true, '$');
+      errors.check(p.parties.every((party) => party.level !== '暂无法判断'), '$.parties', '有依据的建议必须覆盖全部参与方');
+      const linked = p.parties.flatMap((party) => party.causalIds);
+      errors.check(!causal.analyses.some((analysis) => linked.includes(analysis.id) && analysis.conclusion === 'conditional') && !relatedIssues(c, linked).some((issue) => issue.severity === 'conditional'), '$.recommendationType', '仍依赖条件时应输出条件性建议');
     }
   }
+  errors.finish();
 }
 
 export interface SubmitInput {
@@ -696,6 +745,49 @@ export interface SubmitInput {
   title?: string;
   stage: Stage;
   payload: unknown;
+}
+
+/** Corrections that remove an investigation requirement must retain an explicit factual basis. */
+function validateAssessmentRevision(c: CaseRecord, stage: 'faults' | 'causation', payload: Faults | Causation) {
+  const errors = new ValidationIssues();
+  if (payload.revisionBasis) errors.capture('$.revisionBasis.factIds', () => checkFacts(c, payload.revisionBasis!.factIds, true));
+  const previous = c.stages[stage];
+  const changed: string[] = [];
+  if (previous.payload && c.stages.evidence.revision <= previous.revision) {
+    if (stage === 'faults') {
+      const old = previous.payload as Faults;
+      const next = payload as Faults;
+      old.faults.forEach((fault) => {
+        const index = next.faults.findIndex((item) => item.id === fault.id);
+        if (index < 0) changed.push('$.faults');
+        else if (fault.pendingConditions.some((condition) => !next.faults[index]!.pendingConditions.includes(condition))) changed.push(`$.faults[${index}].pendingConditions`);
+      });
+    } else {
+      const old = previous.payload as Causation;
+      const next = payload as Causation;
+      old.analyses.forEach((analysis) => {
+        const index = next.analyses.findIndex((item) => item.id === analysis.id);
+        const entry = next.analyses[index];
+        if (!entry) { changed.push('$.analyses'); return; }
+        const path = `$.analyses[${index}]`;
+        if (analysis.timingRequired !== false && Object.values(analysis.timeline).some((moment) => moment.value === null) && entry.timingRequired === false) changed.push(`${path}.timingRequired`);
+        if (analysis.technicalReviewRequired && !entry.technicalReviewRequired) changed.push(`${path}.technicalReviewRequired`);
+        for (const parameter of analysis.parameters.filter((item) => item.required && (item.value === null || item.factIds.length === 0))) {
+          const parameterIndex = entry.parameters.findIndex((item) => item.name === parameter.name);
+          if (parameterIndex < 0 || !entry.parameters[parameterIndex]!.required) changed.push(`${path}.parameters${parameterIndex < 0 ? '' : `[${parameterIndex}].required`}`);
+        }
+        if ((analysis.conclusion !== 'not_established' && entry.conclusion === 'not_established') || (analysis.conclusion !== 'supported' && entry.conclusion === 'supported')) changed.push(`${path}.conclusion`);
+        if (analysis.contribution.score === null && entry.contribution.score === 0) changed.push(`${path}.contribution.score`);
+      });
+      const rank = { supplementary: 0, conditional: 1, blocking: 2 };
+      for (const issue of old.issues.filter((item) => item.severity !== 'supplementary')) {
+        const index = next.issues.findIndex((item) => item.id === issue.id);
+        if (index < 0 || rank[next.issues[index]!.severity] < rank[issue.severity]) changed.push('$.issues');
+      }
+    }
+  }
+  errors.check(!changed.length || !!payload.revisionBasis, '$.revisionBasis', '证据阶段未更新，取消待查条件、调查要求或改为确定结论时须填写 revisionBasis（reason 与已采纳 factIds）；正常纠正可沿用现有事实，不能仅为取得责任等级放宽条件', { relatedPaths: [...new Set(changed)], expected: '{reason: 修正原判断的具体理由, factIds: 支持该修正的已采纳事实ID[]}' });
+  errors.finish();
 }
 export interface SubmitResult {
   saved: true;
@@ -827,16 +919,13 @@ export function submitStage(store: CaseStore, lib: LawLibrary, input: SubmitInpu
       break;
     case 'faults':
       validateFaults(record, payload as Faults);
+      validateAssessmentRevision(record, 'faults', payload as Faults);
       break;
     case 'causation':
       blockers = validateCausation(record, payload as Causation);
+      validateAssessmentRevision(record, 'causation', payload as Causation);
       break;
     case 'liability': {
-      const clarification = clarificationFor(record, true);
-      const type = (payload as Liability).recommendationType;
-      ensure(type !== 'supported' || clarification.pendingCount === 0, '存在影响定责的待回答问题，不能给出无条件的确定建议；可先保存明确假设下的条件性建议或暂无法判断，不要求答完所有问题');
-      ensure(type !== 'supported' || clarification.unresolved.length === 0, '关键补问事项仍然未知或存在争议，只能给出明确条件下的建议或暂无法判断');
-      ensure(!(clarification.pendingCount || clarification.unresolved.length) || (payload as Liability).limitations.length > 0, '仍有未解决的事故事实，责任建议须在 limitations 中说明限制');
       validateLiability(record, lib, payload as Liability, reg);
       break;
     }

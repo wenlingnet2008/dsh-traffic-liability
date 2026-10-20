@@ -299,6 +299,7 @@ assert.deepEqual(store.get(caseId), beforeInvalidDuties, '汇总失败不得改�
 const manyErrors = validationFailure('duties', new PayloadValidationError(Array.from({ length: 15 }, (_, index) => ({
   path: `$.issues[${index}].affectedIds`, message: '引用不存在', actual: Array.from({ length: 30 }, (_, i) => `bad_${i}`),
   allowedValues: Array.from({ length: 30 }, (_, i) => `duty_${i}`),
+  missingValues: Array.from({ length: 30 }, (_, i) => `issue_${i}`), relatedPaths: Array.from({ length: 30 }, (_, i) => `stages.causation.payload.analyses[${i}]`),
 }))));
 assert.equal(manyErrors.errors.length, 12);
 assert.equal(manyErrors.omittedErrors, 3);
@@ -306,6 +307,10 @@ assert.equal(manyErrors.errors[0].actual!.length, 20);
 assert.equal(manyErrors.errors[0].omittedActual, 10);
 assert.equal(manyErrors.errors[0].allowedValues!.length, 20);
 assert.equal(manyErrors.errors[0].omittedAllowedValues, 10);
+assert.equal(manyErrors.errors[0].missingValues!.length, 20);
+assert.equal(manyErrors.errors[0].omittedMissingValues, 10);
+assert.equal(manyErrors.errors[0].relatedPaths!.length, 20);
+assert.equal(manyErrors.errors[0].omittedRelatedPaths, 10);
 assert.throws(() => new ValidationIssues().capture('$.issues', () => { throw new TypeError('unexpected bug'); }), TypeError, '汇总器不能吞掉程序异常');
 assert.throws(() => submitStage(store, lib, { caseId, stage: 'duties', payload: {
   ...duties, legalMatches: [{ ...legalMatch, behaviorId: 'missing_behavior' }],

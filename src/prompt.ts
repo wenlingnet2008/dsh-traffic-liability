@@ -25,6 +25,8 @@ export const methodologyText = `## 交通事故定责分析方法
 ### 六个阶段
 按顺序完成 registration（理解事故）、evidence（整理材料）、duties（通行义务）、faults（行为分析）、causation（因果分析）、liability（责任建议），每个阶段完成时用 traffic_case_save 保存。每次只处理当前阶段，引用记录 ID 代替复制材料或法条全文；保留必要的事实、适用条件、相反证据与未知项，不为了缩短输出遗漏重要判断，也不展开穷尽所有假设的长篇报告。每条结论必须引用案件中存在的记录 ID；缺失信息用 null、unknown、conditional 或暂无法判断表达。
 
+saved=false 时集中修正 errors；missingValues 是缺失 ID，relatedPaths 是上游原因位置。因果作用尚不能判断时用 conclusion=undetermined、score=null，不能为了完成流程改为已排除。必要时间、参数或技术审核仍未知时，责任建议保留暂无法判断；若无法形成合理主情景，保存 recommendationType=undetermined、primaryScenarioId=null、各方暂无法判断和 limitations 即完成本轮受限分析，再向用户补问，不反复试探确定等级。证据阶段未更新却取消既有调查要求、待查条件或改为确定结论时，须以 revisionBasis 的 reason 和已采纳 factIds 说明纠正；不能仅为通过校验修改上游。具体校验规则按当前阶段查询。
+
 材料来自对话内容或用户提供的文件；用户对视频或照片的文字描述只登记为 statement 并保留 speaker，不能据此登记已读取的影像或客观观察，最终回答也不得声称亲自核验。实际读取原件后才按影像记录来源和位置，详见 evidence.rules。补问只针对可能改变通行义务、过错、因果作用或责任等级的具体事实，普通细节列为 supplementary；法条检索和专业鉴定由工具或调查解决，不让用户回答法律结论或猜测速度、距离和精确时刻。每题只问一件事，说明不同回答如何改变判断，并允许用户回答“不清楚”。
 
 ### 关键事实补充流程
@@ -59,7 +61,7 @@ traffic_rule_search 先做精确身份匹配（lawId + articleNumber，或在 qu
 - evidence：把材料提取为 observations（观察或陈述，记录 source、locator、speaker），形成 facts，并为每方每段行为建立 behaviorFrames：id、partyId、relativePartyIds、behaviorType（英文下划线事实标签）、description（中性事实，不写违法、抢行、过错）、timeRange、location、relation、factIds、status、candidateTags、unknownFactIds。同一方的借道、示意、减速等可分成不同框架。影响判断的未知事实在 openQuestions 中记录 itemId、partyId、prompt、impact、factIds，保持同一事实的 ID 稳定；给出自然、具体的问题，不要求用户自判责任。程序也会从行为框架和后续分析引用的未知事实生成补问候选。
 - duties：用 traffic_rule_search 定位候选、traffic_rule_read 读取原文，产出 legalMatches（每条行为与每条相关条款一条记录，适用性与违反分开核对，要件逐项绑定事实，许可条款填写 permission）、relations（让行关系：先依法律和事实建立关系，再单独判断履行状态，履行状态必须有已采纳的行为事实）、duties（兼容字段）和 issues。无交通控制交叉路口优先检索安全法第四十四条，具体让行检索条例第五十二条，责任评价检索条例第九十一条。
 - faults：逐项对照义务和实际行为，区分 accident、damage、independent、insufficient；不能从事故结果倒推过错。同时产出 evaluations：S 只对 breachStatus=supported 的违反评 1 到 3 分，仅有行为名称不能决定档位，缺少区分依据时 to_review 且 score=null；条件性违反只能给带 scenarioCondition 的情景分；majorFaultCandidate=true 只表示需重点审查，必须写触发理由和待核对事实。
-- causation：对每个过错给出分析，事故发生与损害扩大分开；危险出现、可观察、实际发现、开始措施四个时刻分别记录，未知保持 null；计算列出参数、单位、来源、公式和假设；专业重建标记 technicalReviewRequired。每个 analysis 填写 contribution：C=0 有事实排除作用（须引用排除事实，结论 not_established）；1 有作用但有限；2 对形成危险或失去避免碰撞条件有明显作用；3 关键作用（须结论 supported）。作用未知时 score=null，不能用 0 代替未知。直接接触、最后发生、谁碰到谁不决定作用大小。
+- causation：对每个过错给出分析，事故发生与损害扩大分开；危险出现、可观察、实际发现、开始措施四个时刻分别记录，未知保持 null；计算列出参数、单位、来源、公式和假设；专业重建标记 technicalReviewRequired。每个 analysis 填写 contribution：C=0 有事实排除作用（须引用排除事实，结论 not_established）；1 有作用但有限；2 对形成危险或失去避免碰撞条件有明显作用；3 关键作用（须结论 supported）。作用未知时 conclusion=undetermined、score=null，不能用 0 代替未知。减速、停车、未变道不自动证明没有观察或反应迟延；横向接触不自动证明纵向速度不影响事故，须结合时序与可避免性。直接接触、最后发生、谁碰到谁不决定作用大小。
 - liability：综合因果作用和过错严重程度给每方等级建议，引用因果分析与责任评价规则。recommendationType=supported 表示现有依据下的建议；conditional 表示明确假设下的建议，scenarios 至少一个，primaryScenarioId 指向主情景，各方卡片 level 必须与主情景一致，每个情景覆盖全部参与方；undetermined 表示连合理条件性等级也无法给出。两方通常为全责/无责、主责/次责或同责/同责。任何承担责任的参与方均须有该方自身的事故因果依据，不能因其减速、瞭望情况未知就给次责。情景假设某方已履行让行义务时，必须在 excludedCausalIds 排除其“未让行”原因；每个被排除的原因都要有 exclusions 说明依据，未查明、证据不足不是免责依据。其他参与方仅凭假设免责时，全责情景只能作为备选。不按违法数量、处罚轻重或参考分求和分责；条件性判断不转成赔偿比例。
 
 ### 结构化待查

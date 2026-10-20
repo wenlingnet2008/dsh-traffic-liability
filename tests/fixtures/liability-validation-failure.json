@@ -1,0 +1,47 @@
+{
+  "saved": false,
+  "stage": "liability",
+  "code": "validation_failed",
+  "errors": [
+    {
+      "path": "$.parties[0].ruleIds",
+      "message": "参与方 A 缺少责任评价规则，不能仅凭通行义务推导等级",
+      "allowedValues": [
+        "regulation_16"
+      ],
+      "omittedAllowedValues": 0,
+      "expected": "事故责任评价法条，例如实施条例第九十一条；先检索并读取原文"
+    },
+    {
+      "path": "$.scenarios[0].assignments[0].causalIds",
+      "message": "情景 S1 已经排除的原因不能再用于分责",
+      "actual": [
+        "AN-A"
+      ],
+      "omittedActual": 0
+    },
+    {
+      "path": "$.parties[0].causalIds",
+      "message": "责任卡片不能引用主情景已排除的原因"
+    },
+    {
+      "path": "$.scenarios[0].issueIds",
+      "message": "主情景须覆盖影响建议的全部条件性缺项",
+      "actual": [],
+      "missingValues": [
+        "I1",
+        "CI1"
+      ],
+      "allowedValues": [
+        "I1",
+        "CI1"
+      ],
+      "omittedActual": 0,
+      "omittedAllowedValues": 0,
+      "omittedMissingValues": 0
+    }
+  ],
+  "totalErrors": 4,
+  "omittedErrors": 0,
+  "correction": "本次未保存。集中修正 errors 指定的字段和缺失 ID。若关键事实或因果作用仍未知，保留上游调查要求，将 recommendationType 设为 undetermined、各方 level 设为暂无法判断、primaryScenarioId 设为 null、scenarios/exclusions 设为空数组，说明 limitations；无需反复试探等级或改写上游以取得确定结论。"
+}

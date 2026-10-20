@@ -339,6 +339,7 @@ export const dutiesSpec: Spec = obj({
 
 export const scoreStatuses = ['scored', 'to_review', 'not_applicable'] as const;
 export const faultCategories = ['accident', 'damage', 'independent', 'insufficient'] as const;
+const revisionBasisSpec = obj({ reason: req(text), factIds: req(arr(id, 200, 1)) });
 export const faultsSpec: Spec = obj({
   faults: req(
     arr(
@@ -374,6 +375,7 @@ export const faultsSpec: Spec = obj({
     ),
   ),
   unknowns: req(texts),
+  revisionBasis: revisionBasisSpec,
 });
 
 const moment = obj({ value: req(nullable(text)), factIds: req(refs) });
@@ -384,7 +386,7 @@ export const causationSpec: Spec = obj({
         id: req(id),
         faultId: req(id),
         outcome: req(en('accident', 'damage')),
-        conclusion: req(en('supported', 'conditional', 'not_established')),
+        conclusion: req(en('supported', 'conditional', 'not_established', 'undetermined')),
         mechanism: req(arr(obj({ description: req(text), factIds: req(arr(id, 200, 1)) }), 100, 1)),
         timeline: req(obj({ hazardAppeared: req(moment), observable: req(moment), discovered: req(moment), responseStarted: req(moment) })),
         timingRequired: { type: 'boolean' },
@@ -422,6 +424,7 @@ export const causationSpec: Spec = obj({
   ),
   issues: req(arr(issueSpec, 20)),
   limitations: req(texts),
+  revisionBasis: revisionBasisSpec,
 });
 
 export const responsibilityLevels = ['全责', '主责', '同责', '次责', '无责', '暂无法判断'] as const;
@@ -524,17 +527,22 @@ const stageRules: Record<Stage, readonly string[]> = {
     'faults[].dutyId 引用同一参与方的上游 duties；evaluations[].faultId、legalMatchIds 引用本案记录，同一过错只评价一次。',
     'seriousness.status=scored 时 score 为 1..3，须引用 supported 违反或带 scenarioCondition 的 conditional 违反；其余状态 score=null，依据不足不默认评分。',
     'majorFaultCandidate=true 时须有 majorFaultReason 和 pendingReviewFactIds。',
+    '证据阶段未更新却删除过错或待查条件时，填写 revisionBasis={reason,factIds} 说明纠正理由并引用已采纳事实；不得为取得等级清空未知项。',
   ],
   causation: [
     '每项上游过错均须有因果分析；analyses[].faultId 引用 faults[].id；issues[].affectedIds 仅引用当前 analyses[].id。',
     'conclusion=supported 须有至少两步机制、反事实事实依据，所依赖义务和事实均已成立，不能仍受非 supplementary 缺项影响。',
     '时间和参数非 null 时须有事实来源；未知保留 null。timingRequired=false 须写 timingReason，技术审核须写原因。',
-    'contribution 未评分时 score=null；0 须结论 not_established 并引用已采纳的排除事实；3 须结论 supported；conditional 评分须 scenarioCondition。减速或未变道本身不足以排除观察、制动迟延，须结合可观察时点及避免可能性。',
+    '作用无法判断用 conclusion=undetermined、contribution.score=null，不能据此免责或分责。not_established 表示已用 exclusionFactIds 的已采纳事实排除，且上游过错及相关 issues 不再有影响该原因的待查条件；0 不代替未知，3 须 supported，conditional 评分须 scenarioCondition。',
+    '减速、停车或未变道本身不足以排除观察、制动迟延；横向碰撞也不能直接排除纵向速度的作用，须结合时序及可避免性。',
+    '证据阶段未更新却取消必要时间、参数、技术审核或待查事项，或将未知/条件性分析改为确定结论时，须填写 revisionBasis={reason,factIds}。正常纠正可引用现有已采纳事实；未解决的上游缺项仍约束当前结论。',
   ],
   liability: [
     '存在待解决的事故事实时不能 recommendationType=supported；conditional 须有主情景、明确条件及 limitations，undetermined 的各方等级均为暂无法判断。',
     '情景覆盖全部参与方；责任卡片与主情景等级、causalIds 一致；承担责任者须有本人事故因果依据，不按分数求和分责。',
     '排除原因须有 exclusions 与事实依据，证据不足不等于免责；主情景须覆盖影响建议的全部条件性 issues，blocking 事项不能包装成确定情景。',
+    '因果分析为 undetermined、仍有必要时间/参数未知或关键阻断时，相关方等级为暂无法判断。无法形成合理主情景可直接保存 recommendationType=undetermined、primaryScenarioId=null、各方暂无法判断，并列明 limitations；无需改写上游取得确定等级。',
+    '校验失败一次修正全部 errors；missingValues 列出缺失 ID，relatedPaths 定位上游原因。不反复读取整案、猜测缺失 ID，或删去必需分析绕过校验。',
   ],
 };
 
@@ -714,6 +722,12 @@ export interface Faults {
   faults: Fault[];
   evaluations: FaultEvaluation[];
   unknowns: string[];
+  revisionBasis?: RevisionBasis;
+}
+/** An explicit correction of an earlier assessment using adopted facts. */
+export interface RevisionBasis {
+  reason: string;
+  factIds: string[];
 }
 export interface Moment {
   value: string | null;
@@ -723,7 +737,7 @@ export interface CausalAnalysis {
   id: string;
   faultId: string;
   outcome: 'accident' | 'damage';
-  conclusion: 'supported' | 'conditional' | 'not_established';
+  conclusion: 'supported' | 'conditional' | 'not_established' | 'undetermined';
   mechanism: { description: string; factIds: string[] }[];
   timeline: { hazardAppeared: Moment; observable: Moment; discovered: Moment; responseStarted: Moment };
   timingRequired?: boolean;
@@ -742,6 +756,7 @@ export interface Causation {
   analyses: CausalAnalysis[];
   issues: AnalysisIssue[];
   limitations: string[];
+  revisionBasis?: RevisionBasis;
 }
 export interface CausalExclusion {
   causalId: string;

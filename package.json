@@ -34,7 +34,7 @@
     "test:tarball": "node tests/tarball.mjs",
     "typecheck": "tsc -p tsconfig.json 2>&1 | grep -E '^(src|tests)/' || echo 'no plugin type errors'",
     "smoke": "node --import tsx tests/smoke.ts",
-    "test": "node --import tsx tests/smoke.ts && node --import tsx tests/questions.ts && node --import tsx tests/review.ts && node --import tsx tests/tools.ts"
+    "test": "node --import tsx tests/smoke.ts && node --import tsx tests/questions.ts && node --import tsx tests/liability.ts && node --import tsx tests/review.ts && node --import tsx tests/tools.ts"
   },
   "dependencies": {
     "docx": "9.11.0"

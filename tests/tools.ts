@@ -12,6 +12,7 @@ import type { saveReview, exportReview } from '../src/review.ts';
 import { intake, analysis } from './review-fixtures.ts';
 import { stages, type stageContracts } from '../src/schema.ts';
 import type { validationFailure } from '../src/validation.ts';
+import { liabilityFixture } from './liability-fixtures.ts';
 
 type ContractResult = { stageContract: ReturnType<typeof stageContracts> };
 
@@ -109,6 +110,13 @@ try {
   assert.equal((await call<ReturnType<typeof readCase>>('traffic_case_read', { caseId })).adoptedFacts[0].adoptionBasis, 'statement_adopted');
   const lawDataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'laws');
   const lib = loadLawLibrary(lawDataDir);
+  const scenario = liabilityFixture(lib);
+  const scenarioCase = await call<SubmitResult>('traffic_case_save', { stage: 'registration', payload: scenario.registration });
+  for (const stage of ['evidence', 'duties', 'faults', 'causation'] as const) await call('traffic_case_save', { caseId: scenarioCase.caseId, stage, payload: scenario[stage] });
+  const liabilityRejected = await call<ReturnType<typeof validationFailure>>('traffic_case_save', { caseId: scenarioCase.caseId, stage: 'liability', payload: scenario.rejected });
+  assert.deepEqual(liabilityRejected, JSON.parse(readFileSync(new URL('./fixtures/liability-validation-failure.json', import.meta.url), 'utf8')));
+  assert.match(liabilityRejected.correction, /undetermined/);
+  assert.equal((await call<SubmitResult>('traffic_case_save', { caseId: scenarioCase.caseId, stage: 'liability', payload: scenario.liability })).saved, true);
   const freshReview = await call<ReturnType<typeof saveReview>>('traffic_review_save', { section: 'intake', payload: intake });
   const reviewId = freshReview.caseId;
   const list = await call<{ reviewContract: { intake: unknown } }>('traffic_case_read', { reviewSection: 'intake' });

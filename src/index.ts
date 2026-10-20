@@ -78,7 +78,7 @@ export function apply(ctx: Context, config: Config) {
   ctx.tools.register(
     defineTool({
       name: 'traffic_case_save',
-      description: `校验并保存一个阶段的结构化结果。顺序：${stageList}。输入不合法返回 saved=false 及 errors，未写入；修正后重试。成功后检查 clarification：关键事实阻断时受影响部分保持暂无法判断；条件性问题允许先保存附条件建议，申请资料缺项不阻止事故分析。不得代答。`,
+      description: `校验并保存一个阶段的结构化结果。顺序：${stageList}。输入不合法返回 saved=false 及 errors，未写入；集中修正字段及缺失ID。关键因果未知时保存暂无法判断，不改写上游取得等级。成功后检查 clarification：关键事实阻断时受影响部分保持暂无法判断；条件性问题允许先保存附条件建议，申请资料缺项不阻止事故分析。不得代答。`,
       parameters: {
         stage: { type: 'string', enum: stages, required: true, description: '阶段名' },
         payload: { type: 'json', required: true, description: '该阶段完整对象。首次处理前用 traffic_case_read({stage}) 读取 schema 和 rules，不用空对象试探。校验失败时集中修正 errors 后提交；修正依据在工具结果中，无需查找插件源码' },

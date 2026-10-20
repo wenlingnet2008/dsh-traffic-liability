@@ -54,11 +54,15 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 阶段顺序固定：registration、evidence、duties、faults、causation、liability。保存成功后下游已有结果标为 stale。有 blocking 待查事项的阶段状态为 `needs_investigation`，责任建议中受影响的一方必须保持“暂无法判断”。
 
-`traffic_case_save` 的输入校验失败返回 `saved:false`、`code:validation_failed`、`errors`，不写入案件、不更新 revision、不使下游失效，首次登记失败也不会留下空案件。每项错误有 `path`、`message`，引用错误另含错误 ID、允许的引用集合或来源；最多返回 12 项错误、每项最多展示 20 个引用建议，省略数单独列出。结构合法后，证据记录、法律匹配、过错评价、因果分析与待查事项中的独立错误集中收集；依赖无效引用的检查停止，避免误报。存储损坏、读写失败和程序异常仍抛出错误，不能视为普通输入问题。
+`traffic_case_save` 的输入校验失败返回 `saved:false`、`code:validation_failed`、`errors`，不写入案件、不更新 revision、不使下游失效，首次登记失败也不会留下空案件。每项错误有 `path`、`message`，引用错误另含错误 ID、允许的引用集合或来源；`missingValues` 列出缺失 ID，`relatedPaths` 定位上游原因。最多返回 12 项错误、每项引用列表最多展示 20 项，省略数单独列出。结构合法后，证据记录、法律匹配、过错评价、因果分析、责任卡片、情景、排除说明与待查事项中的独立错误集中收集；依赖无效引用的检查停止，避免误报。存储损坏、读写失败和程序异常仍抛出错误，不能视为普通输入问题。
 
 首次处理阶段前，调用 `traffic_case_read({stage:"registration"})`（替换为当前阶段）读取 `stageContract[stage]`；无需先建案，传入 stage 时仅查询格式并忽略 caseId。结果含 `requiredFields`、紧凑的 `schema`、`notes` 及当前阶段的业务约束 `rules`：`key?: type` 为可选字段、`a | b` 为枚举、`type | null` 为可空、`type[]` 为数组、`{...}` 为嵌套对象；联合类型的数组元素用括号分组。方括号注明 minLength/maxLength、pattern、min/max、minItems/maxItems；对象禁止额外字段，minLength 按去除首尾空白后的长度校验，maxLength 按原文长度校验。普通列表和读案只含六阶段字段摘要，不重复加载完整阶段或复核格式。
 
 保存前按 schema 和 rules 构造完整 payload，不用空对象试探。例如 duties 的 `issues[].affectedIds` 只能引用当前 `duties[].id`，不是 legalMatches 或 relations 的 ID；要件 unknown 必须引用未知或争议事实，全部要件满足后才能用 applicable。校验失败时集中修正 errors 后重新提交，并检查 saved；工具结果已给出修正依据，不要求模型搜索插件源码。可空对象缺字段时，错误信息列出缺失字段并注明“也可以为 null”。不能通过编造事实、删除必要分析或改为 null 绕过业务约束。
+
+因果作用无法判断用 `conclusion:undetermined` 和 `contribution.score:null`；该状态形成调查阻断，不能作为分责或主结论免责依据。`not_established` 表示已有 `exclusionFactIds` 的已采纳事实排除该原因，不能仍有影响该原因的上游待查条件或非 supplementary 缺项。减速、停车、未变道或横向接触本身都不能直接排除观察、反应迟延或速度的事故作用。不能形成合理主情景时，可保存 `recommendationType:undetermined`、各方“暂无法判断”、`primaryScenarioId:null`、空 `scenarios/exclusions` 和说明限制的 `limitations`，先完成受限分析再补问。
+
+证据阶段未更新，却在 faults 删除过错或待查条件，或在 causation 取消必要时间、参数、专业审核、降低缺项等级或改成确定结论时，须填写可选字段 `revisionBasis:{reason,factIds}`。程序检查理由非空、事实均已采纳；正常纠正可以沿用已有事实，未解决的上游缺项仍约束下游。此检查保留可追溯的修正依据，不能自动判断文字理由或物理推断是否充分。旧案可继续读取，但既有结论不会自动复核；重新提交时适用当前规则。
 
 自定义工具调用方须检查 `saved`，复核格式改用显式查询；从 0.1.3 更新的步骤见[升级说明](docs/upgrade-guide/v0.1.3/stage-validation/guide.zh.md)。
 
