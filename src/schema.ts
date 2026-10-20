@@ -33,10 +33,17 @@ export type Spec =
  */
 export function validate(spec: Spec, value: unknown, path = '$'): string[] {
   if ('oneOf' in spec) {
-    const attempts = spec.oneOf.map((branch) => validate(branch, value, path));
-    if (attempts.some((a) => a.length === 0)) return [];
-    const shortest = attempts.slice().sort((a, b) => a.length - b.length)[0] ?? [];
-    return shortest.length ? shortest : [`${path} 不符合任一允许的形式`];
+    const attempts = spec.oneOf.map((branch) => ({ branch, violations: validate(branch, value, path) }));
+    if (attempts.some((a) => a.violations.length === 0)) return [];
+    // Prefer the branch whose top-level type matches the value: a nullable object missing fields
+    // would otherwise lose to `null`'s single "必须是 null" violation and hide the real problem.
+    const typed = attempts.filter((a) => typeMatches(a.branch, value));
+    const pool = typed.length > 0 ? typed : attempts;
+    const best = pool.slice().sort((a, b) => a.violations.length - b.violations.length)[0];
+    if (!best) return [`${path} 不符合任一允许的形式`];
+    const allowsNull = attempts.some((a) => 'type' in a.branch && a.branch.type === 'null');
+    const bestIsNull = 'type' in best.branch && best.branch.type === 'null';
+    return allowsNull && !bestIsNull ? [...best.violations, `${path} 也可以为 null`] : best.violations;
   }
   switch (spec.type) {
     case 'string': {
@@ -80,6 +87,57 @@ export function validate(spec: Spec, value: unknown, path = '$'): string[] {
       return violations;
     }
   }
+}
+
+/** Whether a spec's top-level type matches the candidate, ignoring oneOf alternatives. */
+function typeMatches(spec: Spec, value: unknown): boolean {
+  if ('oneOf' in spec) return spec.oneOf.some((branch) => typeMatches(branch, value));
+  switch (spec.type) {
+    case 'object':
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'null':
+      return value === null;
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+    case 'integer':
+      return typeof value === 'number';
+    case 'boolean':
+      return typeof value === 'boolean';
+  }
+}
+
+/**
+ * Render a spec as a compact field outline: `key?: type`, `a | b` enums, `type | null` nullable,
+ * `type[]` arrays. Kept small because every `traffic_case_read` carries all six stages.
+ */
+export function describeSpec(spec: Spec): string {
+  const render = (s: Spec): string => {
+    if ('oneOf' in s) {
+      const parts = s.oneOf.map(render);
+      return parts.includes('null') ? `${parts.filter((p) => p !== 'null').join(' | ')} | null` : parts.join(' | ');
+    }
+    switch (s.type) {
+      case 'string':
+        return s.enum ? s.enum.map((value) => JSON.stringify(value)).join(' | ') : 'string';
+      case 'number':
+      case 'integer':
+        return s.type;
+      case 'boolean':
+        return 'boolean';
+      case 'null':
+        return 'null';
+      case 'array':
+        return `${render(s.items)}[]`;
+      case 'object':
+        return `{${Object.entries(s.properties)
+          .map(([key, value]) => `${key}${value.required ? '' : '?'}: ${render(value)}`)
+          .join(', ')}}`;
+    }
+  };
+  return render(spec);
 }
 
 const id: Spec = { type: 'string', pattern: /^[A-Za-z0-9_-]{1,80}$/ };

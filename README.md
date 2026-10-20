@@ -44,7 +44,7 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 | 工具 | 作用 |
 | --- | --- |
-| `traffic_case_read` | 读取案件概览、已采纳事实、有效上游结果、补问状态、待更新证据草稿、各阶段必填字段和法规库摘要；省略 caseId 列出案件 |
+| `traffic_case_read` | 读取案件概览、已采纳事实、有效上游结果、补问状态、待更新证据草稿、各阶段字段契约（`stageContract`）和法规库摘要；省略 caseId 列出案件 |
 | `traffic_case_save` | 校验并保存一个阶段的结果；首次保存 registration 不传 caseId 即新建案件 |
 | `traffic_case_answer` | 保存用户补充回答或“不清楚”；明确回答及撤回会触发证据更新与下游重分析 |
 | `traffic_rule_search` | 精确身份或关键词检索候选法条，返回候选卡；缺条返回 `not_in_library` |
@@ -55,6 +55,8 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 阶段顺序固定：registration、evidence、duties、faults、causation、liability。保存成功后下游已有结果标为 stale。有 blocking 待查事项的阶段状态为 `needs_investigation`，责任建议中受影响的一方必须保持“暂无法判断”。
 
 校验失败以错误返回给模型并说明修正方向，例如引用不存在的事实、把许可条款写成已违反、引用法条库中不存在的原文片段、未知作用分写成 0。
+
+`stageContract[stage]` 同时给出 `requiredFields` 和紧凑的 `schema`（`key?: type` 可选字段、`a | b` 枚举、`type | null` 可空、`type[]` 数组、`{...}` 嵌套对象）。保存前按它构造 payload，可避免因猜错字段结构而反复校验失败；可空对象缺字段时，错误信息会列出缺失字段并注明“也可以为 null”，不会再只报“必须是 null”。
 
 ## 关键事实补问
 

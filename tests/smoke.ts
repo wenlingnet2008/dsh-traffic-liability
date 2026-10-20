@@ -271,6 +271,16 @@ assert.throws(
   () => submitStage(store, lib, { caseId, stage: 'duties', payload: { ...duties, legalMatches: [{ ...legalMatch, breachStatus: 'supported' }] } }),
   /许可判断/,
 );
+// A nullable object missing fields must report those fields, not `null`'s single "必须是 null" line.
+assert.throws(
+  () =>
+    submitStage(store, lib, {
+      caseId,
+      stage: 'duties',
+      payload: { ...duties, legalMatches: [{ ...legalMatch, permission: {} }] },
+    }),
+  (error: Error) => /permission\.status 缺少必填字段/.test(error.message) && /也可以为 null/.test(error.message),
+);
 const savedDuties = submitStage(store, lib, { caseId, stage: 'duties', payload: duties });
 assert.equal(savedDuties.status, 'analyzed');
 assert.equal(savedDuties.nextStage, 'faults');
@@ -281,6 +291,12 @@ assert.match(savedDuties.clarification.questions[0].impact, /许可是否成立/
 // Re-saving an upstream stage marks downstream results stale.
 submitStage(store, lib, { caseId, stage: 'evidence', payload: evidence });
 assert.equal(readCase(store, lib, caseId).stages.duties.status, 'stale');
+
+// stageContract publishes the field outline so save payloads need not be guessed.
+const contract = readCase(store, lib, caseId).stageContract as Record<string, { requiredFields?: string[]; schema?: string }>;
+assert.ok(contract.liability?.requiredFields?.includes('summary'), 'stageContract 仍应保留必填字段');
+assert.match(contract.duties?.schema ?? '', /conditionally_allowed/, 'stageContract 应包含字段枚举');
+assert.match(contract.duties?.schema ?? '', /permission: \{status:/, 'stageContract 应包含嵌套字段结构');
 
 // An unknown accident date no longer blocks: version checks are skipped and the save note says so.
 assert.equal(ruleInForce(lib.byId.get(rule70.ruleId)!.rule, null, '北京市'), null);

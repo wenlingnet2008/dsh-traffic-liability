@@ -19,6 +19,7 @@ import {
   type Rule,
 } from './laws.ts';
 import {
+  describeSpec,
   requiredFields,
   stageLabels,
   stageSpecs,
@@ -869,7 +870,9 @@ export function readCase(store: CaseStore, lib: LawLibrary, caseId: string) {
         return [s, { status: r.status, blockers: r.blockers, payload: usable(r.status) ? r.payload : null }];
       }),
     ),
-    stageContract: Object.fromEntries(stages.map((s) => [s, { label: stageLabels[s], requiredFields: requiredFields(s) }])),
+    stageContract: Object.fromEntries(
+      stages.map((s) => [s, { label: stageLabels[s], requiredFields: requiredFields(s), schema: describeSpec(stageSpecs[s]) }]),
+    ),
     lawCatalog: catalogSummary(lib),
   };
 }

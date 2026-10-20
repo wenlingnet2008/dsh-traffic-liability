@@ -53,7 +53,7 @@ export function apply(ctx: Context, config: Config) {
     defineTool({
       name: 'traffic_case_read',
       description:
-        '读取交通事故案件：登记信息、已采纳事实（adoptedFacts）、有效的上游阶段结果、待补充问题和回答状态（clarification）、待更新的证据草稿（evidenceForUpdate）、各阶段必填字段（stageContract）和法规库摘要。省略 caseId 时返回案件列表。',
+        '读取交通事故案件：登记信息、已采纳事实（adoptedFacts）、有效的上游阶段结果、待补充问题和回答状态（clarification）、待更新的证据草稿（evidenceForUpdate）、各阶段字段契约（stageContract，含必填字段与完整字段结构）、法规库摘要和复核契约（reviewContract）。省略 caseId 时返回案件列表。保存阶段前先按 stageContract[stage].schema 核对字段与枚举，可避免校验失败反复重试。',
       parameters: {
         caseId: { type: 'string', description: '案件 ID；省略时列出全部案件' },
       },
@@ -72,7 +72,7 @@ export function apply(ctx: Context, config: Config) {
   ctx.tools.register(
     defineTool({
       name: 'traffic_case_save',
-      description: `校验并保存一个阶段的结构化结果。阶段顺序：${stageList}，必须按顺序完成。首次保存 registration 时省略 caseId 会新建案件并返回 caseId。payload 是该阶段的对象本身；必填字段见 traffic_case_read 的 stageContract。保存后检查 clarification：关键事实阻断时受影响部分保持暂无法判断；未答的条件性问题不阻止先保存附条件建议，申请资料缺项不阻止事故分析。不得代答，确定建议仍须解决影响判断的事实。结构或引用不合法时返回具体错误，修正后重新保存。`,
+      description: `校验并保存一个阶段的结构化结果。阶段顺序：${stageList}，必须按顺序完成。首次保存 registration 时省略 caseId 会新建案件并返回 caseId。payload 是该阶段的对象本身；完整字段与枚举见 traffic_case_read 的 stageContract[stage].schema，提交前先核对。保存后检查 clarification：关键事实阻断时受影响部分保持暂无法判断；未答的条件性问题不阻止先保存附条件建议，申请资料缺项不阻止事故分析。不得代答，确定建议仍须解决影响判断的事实。结构或引用不合法时返回具体错误，修正后重新保存。`,
       parameters: {
         stage: { type: 'string', enum: stages, required: true, description: '阶段名' },
         payload: { type: 'json', required: true, description: '该阶段的结构化结果对象' },
