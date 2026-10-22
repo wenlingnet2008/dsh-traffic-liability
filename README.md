@@ -146,12 +146,32 @@ pnpm dsh web --patch ./traffic-liability-plugin/cordis.yml
 
 ## 打包分发
 
+### GitHub 安装
+
+```sh
+dsh plugin --profile desktop add github:wenlingnet2008/dsh-traffic-liability
+```
+
+GitHub 安装会执行 `prepack` 构建脚本。若 pnpm 报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，将错误输出中的完整包键加入 `~/.dsh/profiles/desktop/pnpm-workspace.yaml` 的 `allowBuilds`，然后重试；使用其他 profile 或自定义 `DSH_HOME` 时修改对应文件。例如，pnpm 11.28.5 对提交 `26867af0d5f8a4aa1d767727a492fc99cbb77027` 给出的配置为：
+
+```yaml
+allowBuilds:
+  "dsh-traffic-liability@https://codeload.github.com/wenlingnet2008/dsh-traffic-liability/tar.gz/26867af0d5f8a4aa1d767727a492fc99cbb77027": true
+```
+
+保留文件中的原有设置；已有 `allowBuilds` 时在其下合并条目。授权键格式随 pnpm 版本变化，应以实际错误输出为准；URL 中的提交改变后需要重新授权。不要全局放开依赖构建脚本。
+
+旧提交 `26867af` 未声明构建依赖 `tsdown`，仅授权仍会出现 `tsdown: command not found`。需安装包含构建修复的新提交，或使用下面的预构建 tarball。当前源码声明独立构建所需的 `tsdown`，打包时不读取相邻 Harness 的 tsconfig。
+
+### 预构建 tarball
+
 在插件目录执行以下命令，生成可直接交付的 npm tarball 和 SHA-256 校验文件：
 
 ```sh
+npm ci --workspaces=false --ignore-scripts
 npm run pack:tarball
-# dist/dsh-traffic-liability-0.1.2.tgz
-# dist/dsh-traffic-liability-0.1.2.tgz.sha256
+# dist/dsh-traffic-liability-0.1.3.tgz
+# dist/dsh-traffic-liability-0.1.3.tgz.sha256
 ```
 
 `prepack` 会自动重新构建 `lib/index.js`，直接执行 `npm pack` 或 `pnpm pack` 也会先构建。`pack:tarball` 额外检查分发文件清单并写入校验文件，可传目录参数：`npm run pack:tarball -- /path/to/output`。打包使用当前源码，包括尚未提交的修改。
@@ -164,13 +184,13 @@ npm run pack:tarball
 
 ```sh
 # macOS / Linux，可选：核对校验文件
-shasum -a 256 -c dsh-traffic-liability-0.1.2.tgz.sha256
-dsh plugin --profile web add ./dsh-traffic-liability-0.1.2.tgz
+shasum -a 256 -c dsh-traffic-liability-0.1.3.tgz.sha256
+dsh plugin --profile web add ./dsh-traffic-liability-0.1.3.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
 
-`--dump-config` 应包含 `id: traffic-liability` 和 `name: dsh-traffic-liability`。安装时自动启用 bundle 层；正在运行的 Harness 需重启。Windows 也可使用相同的 `dsh` 安装命令，校验可用 `Get-FileHash .\dsh-traffic-liability-0.1.2.tgz -Algorithm SHA256`。升级时安装新版本 tarball；卸载执行 `dsh plugin --profile web remove dsh-traffic-liability`，案件文件仍由 `caseDir` 保存。
+`--dump-config` 应包含 `id: traffic-liability` 和 `name: dsh-traffic-liability`。安装时自动启用 bundle 层；正在运行的 Harness 需重启。Windows 也可使用相同的 `dsh` 安装命令，校验可用 `Get-FileHash .\dsh-traffic-liability-0.1.3.tgz -Algorithm SHA256`。升级时安装新版本 tarball；卸载执行 `dsh plugin --profile web remove dsh-traffic-liability`，案件文件仍由 `caseDir` 保存。
 
 tarball 安装会复制包内构建产物，不链接源码目录。法规默认读取包内 `data/laws`，案件默认写到启动时当前目录的 `.traffic-liability`。为保留历史案件，重启和升级时应沿用原工作目录或显式配置原 `caseDir`。
 
@@ -179,7 +199,7 @@ tarball 安装会复制包内构建产物，不链接源码目录。法规默认
 ```sh
 npm run test:tarball
 # 另一个已构建或已安装的 Harness：第二个参数是其 @deepseek-ai/dsh 包目录
-npm run test:tarball -- ./dist/dsh-traffic-liability-0.1.2.tgz /path/to/dsh-package
+npm run test:tarball -- ./dist/dsh-traffic-liability-0.1.3.tgz /path/to/dsh-package
 ```
 
 验证使用临时 `DSH_HOME`，通过已构建的 `dsh` CLI 安装并加载 tarball，结束后清理；默认使用相邻 Harness 的 `apps/cli/lib/bin.js`。测试安装禁用生命周期脚本，确保接收方不需要安装时构建。测试使用各版本宿主的公开接口共享依赖：0.1 使用模块回退，0.2 使用 `createRuntimeResolution` 和 `PluginPackages` 服务；同时检查 0.2 的 bundle 兼容性判定，验证全部七个工具、补问后重分析、法规及 Word 导出。

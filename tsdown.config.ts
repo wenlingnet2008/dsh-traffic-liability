@@ -12,6 +12,8 @@ export default defineConfig({
   target: 'es2024',
   fixedExtension: false,
   dts: false,
+  // Runtime bundling must also work outside the adjacent Harness checkout.
+  tsconfig: false,
   clean: true,
   deps: { neverBundle: [/^@deepseek-ai\//] },
 })
