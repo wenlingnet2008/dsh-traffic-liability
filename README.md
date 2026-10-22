@@ -161,7 +161,7 @@ allowBuilds:
 
 保留文件中的原有设置；已有 `allowBuilds` 时在其下合并条目。授权键格式随 pnpm 版本变化，应以实际错误输出为准；URL 中的提交改变后需要重新授权。不要全局放开依赖构建脚本。
 
-旧提交 `26867af` 未声明构建依赖 `tsdown`，仅授权仍会出现 `tsdown: command not found`。需安装包含构建修复的新提交，或使用下面的预构建 tarball。当前源码声明独立构建所需的 `tsdown`，打包时不读取相邻 Harness 的 tsconfig。
+旧提交 `26867af` 未声明构建依赖 `tsdown`，仅授权仍会出现 `tsdown: command not found`；`abd0b1d` 的 `tsconfig: false` 仍会触发底层构建工具自动寻找开发配置，在独立安装时报 `Tsconfig not found`。需安装包含构建修复的新提交，或使用下面的预构建 tarball。当前源码声明独立构建所需的 `tsdown`，并显式使用 `tsconfig.build.json`，打包时不读取相邻 Harness 的 tsconfig。
 
 ### 预构建 tarball
 

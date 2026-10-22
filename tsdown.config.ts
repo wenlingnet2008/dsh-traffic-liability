@@ -12,8 +12,8 @@ export default defineConfig({
   target: 'es2024',
   fixedExtension: false,
   dts: false,
-  // Runtime bundling must also work outside the adjacent Harness checkout.
-  tsconfig: false,
+  // Use a standalone config so Git installs never resolve the development config's parent.
+  tsconfig: './tsconfig.build.json',
   clean: true,
   deps: { neverBundle: [/^@deepseek-ai\//] },
 })
